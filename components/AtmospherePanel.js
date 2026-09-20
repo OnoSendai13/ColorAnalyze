@@ -8,16 +8,37 @@ import { ATMOSPHERES, applyAtmosphere } from '../lib/atmospheres';
 import { readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
 import EditingGuidance from './EditingGuidance';
+import ImagePreview from './ImagePreview';
 
-export default function AtmospherePanel({ colors = [] }) {
+export default function AtmospherePanel({
+  colors = [],
+  selected: selectedProp = null,
+  onSelect,
+  imageUri = null,
+}) {
   const { theme } = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [selected, setSelected] = useState(null);
+  const [internalSel, setInternalSel] = useState(null);
+
+  // Sélection contrôlée (App.js) avec repli local si non fournie.
+  const selected = onSelect ? selectedProp : internalSel;
+  const setSelected = onSelect ? onSelect : setInternalSel;
 
   if (!colors.length) return null;
 
   const preview = selected ? applyAtmosphere(colors, selected) : null;
   const atmo = ATMOSPHERES.find((a) => a.key === selected);
+
+  // Mapping pour la prévisualisation de la photo (re-teinte réelle).
+  const previewMappings = preview
+    ? preview.map((p) => ({
+        rgb: p.original.rgb,
+        hslOrigine: p.original.hsl,
+        hslCible: p.newHsl,
+        hexOrigine: p.original.hex,
+        hexCible: p.newHex,
+      }))
+    : [];
 
   // Couples origine->cible normalisés pour les consignes de retouche.
   const guidanceTransforms = preview
@@ -87,6 +108,15 @@ export default function AtmospherePanel({ colors = [] }) {
               </View>
             ))}
           </View>
+
+          {/* VOLET 4 — Prévisualisation de la photo re-teintée */}
+          {imageUri && (
+            <ImagePreview
+              imageUri={imageUri}
+              mappings={previewMappings}
+              title={`Aperçu photo — ${atmo.label}`}
+            />
+          )}
 
           <EditingGuidance transforms={guidanceTransforms} context="atmosphere" />
         </>

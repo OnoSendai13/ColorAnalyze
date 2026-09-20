@@ -6,6 +6,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import Svg, { Path, Circle, G, Line, Text as SvgText } from 'react-native-svg';
+import { Feather } from '@expo/vector-icons';
 import { hslToHex, readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
 
@@ -56,6 +57,9 @@ const MODES = ['RGB', 'CMY', 'RYB'];
 export default function ColorWheel({ colors = [], mode = 'RGB', onModeChange }) {
   const { theme } = useTheme();
   const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  // Explication repliable des divergences entre modèles.
+  const [showExplain, setShowExplain] = useState(false);
 
   // Mesure de la largeur disponible pour un rendu responsive.
   const [containerW, setContainerW] = useState(0);
@@ -128,6 +132,58 @@ export default function ColorWheel({ colors = [], mode = 'RGB', onModeChange }) 
       <Text style={styles.caption}>
         Angle = teinte · Distance au centre = saturation · Taille = importance
       </Text>
+
+      {/* Explication repliable : pourquoi les modèles diffèrent */}
+      <Pressable
+        onPress={() => setShowExplain((v) => !v)}
+        style={styles.explainHeader}
+        accessibilityRole="button"
+      >
+        <Feather name="help-circle" size={15} color={theme.accentSecondary} />
+        <Text style={styles.explainHeaderTxt}>Pourquoi RGB, CMY et RYB diffèrent ?</Text>
+        <Feather
+          name={showExplain ? 'chevron-up' : 'chevron-down'}
+          size={16}
+          color={theme.textSecondary}
+        />
+      </Pressable>
+
+      {showExplain && (
+        <View style={styles.explainBody}>
+          <Text style={styles.explainP}>
+            Une même couleur ne se place pas au même angle selon le modèle, car chaque modèle
+            définit des primaires différentes et découpe donc le cercle chromatique autrement.
+          </Text>
+          <View style={styles.explainItem}>
+            <View style={[styles.dot, { backgroundColor: theme.accent }]} />
+            <Text style={styles.explainP}>
+              <Text style={styles.explainBold}>RGB</Text> — mélange additif de lumière (écrans,
+              photo). Primaires : rouge, vert, bleu.
+            </Text>
+          </View>
+          <View style={styles.explainItem}>
+            <View style={[styles.dot, { backgroundColor: theme.accentSecondary }]} />
+            <Text style={styles.explainP}>
+              <Text style={styles.explainBold}>CMY</Text> — mélange soustractif d'encres
+              (impression). Primaires : cyan, magenta, jaune ; la roue est en quelque sorte
+              l'opposée de la roue RGB.
+            </Text>
+          </View>
+          <View style={styles.explainItem}>
+            <View style={[styles.dot, { backgroundColor: theme.warning }]} />
+            <Text style={styles.explainP}>
+              <Text style={styles.explainBold}>RYB</Text> — modèle traditionnel des artistes
+              (peinture). Primaires : rouge, jaune, bleu.
+            </Text>
+          </View>
+          <Text style={styles.explainP}>
+            Conséquence : le complémentaire d'une couleur change de modèle en modèle. Le
+            complémentaire du rouge est le cyan en RGB, mais le vert en RYB. Comparer les trois
+            roues aide à choisir des accords cohérents selon le support (écran, impression,
+            peinture).
+          </Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -148,5 +204,34 @@ function makeStyles(t) {
     modeTxt: { fontSize: 13, fontWeight: '700', color: t.textSecondary },
     modeTxtActive: { color: t.accentOnText },
     caption: { marginTop: 12, fontSize: 11, color: t.textMuted, textAlign: 'center' },
+
+    explainHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      alignSelf: 'stretch',
+      marginTop: 16,
+      paddingVertical: 11,
+      paddingHorizontal: 12,
+      borderRadius: 11,
+      backgroundColor: t.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    explainHeaderTxt: { flex: 1, fontSize: 13, fontWeight: '700', color: t.textPrimary },
+    explainBody: {
+      alignSelf: 'stretch',
+      marginTop: 10,
+      padding: 14,
+      borderRadius: 11,
+      backgroundColor: t.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.border,
+      gap: 10,
+    },
+    explainItem: { flexDirection: 'row', alignItems: 'flex-start', gap: 9 },
+    dot: { width: 9, height: 9, borderRadius: 3, marginTop: 5 },
+    explainP: { flex: 1, fontSize: 12.5, color: t.textSecondary, lineHeight: 18 },
+    explainBold: { color: t.textPrimary, fontWeight: '800' },
   });
 }

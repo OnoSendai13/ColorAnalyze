@@ -16,11 +16,14 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
 
 import { getPixelData } from './lib/imagePixels';
 import { extractDominantColors } from './lib/colorAnalysis';
 import { detectScheme } from './lib/colorHarmony';
+import { deleteColorAt, mergeColorsAt, renormalize } from './lib/paletteEdit';
+import { buildReport, buildCsv } from './lib/report';
 import { ThemeProvider, useTheme, ThemeToggle } from './lib/theme';
 
 import ColorPalette from './components/ColorPalette';
@@ -40,6 +43,9 @@ function AppContent() {
 
   const [imageUri, setImageUri] = useState(null);
   const [colors, setColors] = useState([]);
+  const [originalColors, setOriginalColors] = useState([]);
+  const [pixelData, setPixelData] = useState(null); // { data, width, height } en cache
+  const [numColors, setNumColors] = useState(null); // K courant (rééchantillonnage)
   const [detected, setDetected] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -47,29 +53,133 @@ function AppContent() {
   const [wheelMode, setWheelMode] = useState('RGB');
   const [dragOver, setDragOver] = useState(false);
 
+  // Sélections contrôlées (nécessaires au rapport global).
+  const [harmonySelected, setHarmonySelected] = useState(null);
+  const [atmoSelected, setAtmoSelected] = useState(null);
+  const [copied, setCopied] = useState(null); // 'report' | 'csv' | 'csv-copied'
+
   const fileInputRef = useRef(null);
 
   const analyze = useCallback(async (uri) => {
     setLoading(true);
     setError(null);
     try {
-      const { data } = await getPixelData(uri);
-      const extracted = extractDominantColors(data, { minColors: 5, maxColors: 10 });
+      const pd = await getPixelData(uri);
+      const extracted = extractDominantColors(pd.data, { minColors: 5, maxColors: 10 });
       if (!extracted.length) {
         throw new Error('Aucune couleur détectée dans cette image.');
       }
+      setPixelData(pd);
+      setOriginalColors(extracted);
       setColors(extracted);
+      setNumColors(extracted.length);
       setDetected(detectScheme(extracted));
+      setHarmonySelected(null);
+      setAtmoSelected(null);
       setTab('palette');
     } catch (e) {
       console.warn(e);
       setError(e.message || 'Erreur lors de l\'analyse de l\'image.');
       setColors([]);
+      setOriginalColors([]);
+      setPixelData(null);
       setDetected(null);
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // --- VOLET 1 : édition de la palette ---
+  const commitPalette = useCallback((next) => {
+    setColors(next);
+    setDetected(detectScheme(next));
+    setNumColors(next.length);
+  }, []);
+
+  const handleDeleteColor = useCallback(
+    (i) => {
+      const next = deleteColorAt(colors, i);
+      commitPalette(next);
+    },
+    [colors, commitPalette]
+  );
+
+  const handleMergeColors = useCallback(
+    (indices) => {
+      const next = mergeColorsAt(colors, indices);
+      commitPalette(next);
+    },
+    [colors, commitPalette]
+  );
+
+  const handleResample = useCallback(
+    (k) => {
+      if (!pixelData) return;
+      const extracted = extractDominantColors(pixelData.data, { forceK: k });
+      const next = renormalize(extracted);
+      setColors(next);
+      setDetected(detectScheme(next));
+      setNumColors(k);
+    },
+    [pixelData]
+  );
+
+  const handleReset = useCallback(() => {
+    if (!originalColors.length) return;
+    setColors(originalColors);
+    setDetected(detectScheme(originalColors));
+    setNumColors(originalColors.length);
+  }, [originalColors]);
+
+  // Palette modifiée ? (pour activer « Réinitialiser »)
+  const isEdited = useMemo(() => {
+    if (!originalColors.length) return false;
+    if (colors.length !== originalColors.length) return true;
+    return colors.some((c, i) => !originalColors[i] || c.hex !== originalColors[i].hex);
+  }, [colors, originalColors]);
+
+  // --- VOLET 5 : copie du rapport / export CSV ---
+  const handleCopyReport = useCallback(async () => {
+    try {
+      const txt = buildReport({
+        colors,
+        detected,
+        harmonyKey: harmonySelected,
+        atmosphereKey: atmoSelected,
+      });
+      await Clipboard.setStringAsync(txt);
+      setCopied('report');
+      setTimeout(() => setCopied(null), 2200);
+    } catch (e) {
+      console.warn(e);
+      setError('Impossible de copier le rapport.');
+    }
+  }, [colors, detected, harmonySelected, atmoSelected]);
+
+  const handleExportCsv = useCallback(async () => {
+    try {
+      const csv = buildCsv(colors);
+      if (Platform.OS === 'web') {
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'coloranalyze-palette.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        setCopied('csv');
+      } else {
+        await Clipboard.setStringAsync(csv);
+        setCopied('csv-copied');
+      }
+      setTimeout(() => setCopied(null), 2200);
+    } catch (e) {
+      console.warn(e);
+      setError('Impossible d\'exporter le CSV.');
+    }
+  }, [colors]);
 
   // --- Sélection via expo-image-picker (mobile + fallback web) ---
   const pickImage = useCallback(async () => {
@@ -198,6 +308,15 @@ function AppContent() {
           </Pressable>
         </View>
 
+        {/* VOLET 6 — Note de confidentialité */}
+        <View style={styles.privacyNote}>
+          <Feather name="shield" size={14} color={theme.accentSecondary} />
+          <Text style={styles.privacyTxt}>
+            Confidentialité : votre image est analysée directement sur votre appareil. Aucun envoi
+            vers un serveur, aucun stockage, aucune collecte de données.
+          </Text>
+        </View>
+
         {/* Aperçu borné (corrige le débordement) */}
         {imageUri ? (
           <View style={styles.previewFrame}>
@@ -247,7 +366,18 @@ function AppContent() {
               {tab === 'palette' && (
                 <>
                   <View style={styles.card}>
-                    <ColorPalette colors={colors} />
+                    <ColorPalette
+                      colors={colors}
+                      editable
+                      numColors={numColors}
+                      minColors={5}
+                      maxColors={10}
+                      canReset={isEdited}
+                      onDeleteColor={handleDeleteColor}
+                      onMergeColors={handleMergeColors}
+                      onResample={handleResample}
+                      onReset={handleReset}
+                    />
                   </View>
                   <View style={{ height: 16 }} />
                   <View style={styles.card}>
@@ -255,8 +385,61 @@ function AppContent() {
                   </View>
                 </>
               )}
-              {tab === 'harmony' && <HarmonyPanel colors={colors} detected={detected} />}
-              {tab === 'atmosphere' && <AtmospherePanel colors={colors} />}
+              {tab === 'harmony' && (
+                <HarmonyPanel
+                  colors={colors}
+                  detected={detected}
+                  selected={harmonySelected}
+                  onSelect={setHarmonySelected}
+                  imageUri={imageUri}
+                />
+              )}
+              {tab === 'atmosphere' && (
+                <AtmospherePanel
+                  colors={colors}
+                  selected={atmoSelected}
+                  onSelect={setAtmoSelected}
+                  imageUri={imageUri}
+                />
+              )}
+            </View>
+
+            {/* VOLET 5 — Export / copie du rapport */}
+            <View style={styles.actionsCard}>
+              <Text style={styles.actionsTitle}>Exporter l'analyse</Text>
+              <Text style={styles.actionsHint}>
+                Rapport structuré (couleurs, harmonie, disruption, consignes de retouche) et export
+                CSV de la palette.
+              </Text>
+              <View style={styles.actionsRow}>
+                <Pressable
+                  onPress={handleCopyReport}
+                  style={[styles.actionBtn, styles.actionBtnPrimary]}
+                >
+                  <Feather
+                    name={copied === 'report' ? 'check' : 'clipboard'}
+                    size={15}
+                    color={theme.accentOnText}
+                  />
+                  <Text style={[styles.actionBtnTxt, styles.actionBtnTxtPrimary]}>
+                    {copied === 'report' ? 'Rapport copié !' : 'Copier le rapport'}
+                  </Text>
+                </Pressable>
+                <Pressable onPress={handleExportCsv} style={styles.actionBtn}>
+                  <Feather
+                    name={copied && copied.startsWith('csv') ? 'check' : 'download'}
+                    size={15}
+                    color={theme.textPrimary}
+                  />
+                  <Text style={styles.actionBtnTxt}>
+                    {copied === 'csv'
+                      ? 'CSV téléchargé !'
+                      : copied === 'csv-copied'
+                      ? 'CSV copié !'
+                      : 'Exporter en CSV'}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           </>
         )}
@@ -308,7 +491,7 @@ function makeStyles(t) {
       justifyContent: 'center',
       paddingVertical: 34,
       paddingHorizontal: 20,
-      marginBottom: 16,
+      marginBottom: 12,
     },
     dropzoneActive: {
       borderColor: t.accent,
@@ -317,6 +500,20 @@ function makeStyles(t) {
     dropIcon: { marginBottom: 10 },
     dropTitle: { fontSize: 16, fontWeight: '700', color: t.textPrimary },
     dropHint: { fontSize: 12.5, color: t.textSecondary, marginTop: 6, textAlign: 'center' },
+
+    privacyNote: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 12,
+      backgroundColor: t.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.border,
+      marginBottom: 18,
+    },
+    privacyTxt: { flex: 1, fontSize: 11.5, color: t.textSecondary, lineHeight: 16 },
 
     previewFrame: {
       width: '100%',
@@ -376,6 +573,33 @@ function makeStyles(t) {
       padding: 16,
     },
     content: { width: '100%' },
+
+    actionsCard: {
+      marginTop: 18,
+      backgroundColor: t.surface,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: t.border,
+      padding: 16,
+    },
+    actionsTitle: { fontSize: 15, fontWeight: '800', color: t.textPrimary },
+    actionsHint: { fontSize: 12, color: t.textSecondary, marginTop: 6, marginBottom: 14, lineHeight: 17 },
+    actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    actionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 11,
+      borderRadius: 12,
+      backgroundColor: t.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    actionBtnPrimary: { backgroundColor: t.accent, borderColor: t.accent },
+    actionBtnTxt: { fontSize: 13, fontWeight: '700', color: t.textPrimary },
+    actionBtnTxtPrimary: { color: t.accentOnText },
+
     footer: { textAlign: 'center', color: t.textMuted, fontSize: 11, marginTop: 10 },
   });
 }

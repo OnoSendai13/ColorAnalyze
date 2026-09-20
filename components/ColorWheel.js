@@ -1,11 +1,13 @@
 // components/ColorWheel.js
 // Roue chromatique en SVG. Place les couleurs extraites selon HUE (angle) et
 // saturation (rayon). Supporte plusieurs modèles : RGB, CMY, RYB.
+// Responsive : se redimensionne selon la largeur du conteneur.
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import Svg, { Path, Circle, G, Line, Text as SvgText } from 'react-native-svg';
 import { hslToHex, readableTextColor } from '../lib/colorConversions';
+import { useTheme } from '../lib/theme';
 
 /**
  * Convertit une teinte HSL "réelle" (0-360, modèle RGB additif) vers l'angle
@@ -51,7 +53,14 @@ function wedgePath(cx, cy, rInner, rOuter, a0, a1) {
 
 const MODES = ['RGB', 'CMY', 'RYB'];
 
-export default function ColorWheel({ colors = [], size = 280, mode = 'RGB', onModeChange }) {
+export default function ColorWheel({ colors = [], mode = 'RGB', onModeChange }) {
+  const { theme } = useTheme();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  // Mesure de la largeur disponible pour un rendu responsive.
+  const [containerW, setContainerW] = useState(0);
+  const size = Math.max(200, Math.min(320, (containerW || 300) - 4));
+
   const cx = size / 2;
   const cy = size / 2;
   const rOuter = size / 2 - 6;
@@ -62,19 +71,15 @@ export default function ColorWheel({ colors = [], size = 280, mode = 'RGB', onMo
   for (let i = 0; i < segments; i++) {
     const a0 = (i / segments) * 360;
     const a1 = ((i + 1) / segments) * 360;
-    // La teinte affichée à cet angle (inverse du mapping) — on affiche simplement
-    // une roue continue de teintes; le mapping n'affecte que la POSITION des points.
     const displayHue = a0;
     const fill = hslToHex({ h: displayHue, s: 85, l: 52 });
-    wedges.push(
-      <Path key={i} d={wedgePath(cx, cy, rInner, rOuter, a0, a1)} fill={fill} />
-    );
+    wedges.push(<Path key={i} d={wedgePath(cx, cy, rInner, rOuter, a0, a1)} fill={fill} />);
   }
 
   const maxPercent = Math.max(...colors.map((c) => c.percent), 1);
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}>
       <View style={styles.modeRow}>
         {MODES.map((m) => (
           <Pressable
@@ -89,10 +94,10 @@ export default function ColorWheel({ colors = [], size = 280, mode = 'RGB', onMo
 
       <Svg width={size} height={size}>
         <G>{wedges}</G>
-        <Circle cx={cx} cy={cy} r={rInner} fill="#FAFAFA" />
+        <Circle cx={cx} cy={cy} r={rInner} fill={theme.surface} />
         {/* Axes discrets */}
-        <Line x1={cx} y1={cy - rInner} x2={cx} y2={cy + rInner} stroke="#EEE" strokeWidth={1} />
-        <Line x1={cx - rInner} y1={cy} x2={cx + rInner} y2={cy} stroke="#EEE" strokeWidth={1} />
+        <Line x1={cx} y1={cy - rInner} x2={cx} y2={cy + rInner} stroke={theme.border} strokeWidth={1} />
+        <Line x1={cx - rInner} y1={cy} x2={cx + rInner} y2={cy} stroke={theme.border} strokeWidth={1} />
 
         {colors.map((c, idx) => {
           const angle = hueToWheelAngle(c.hsl.h, mode);
@@ -104,8 +109,8 @@ export default function ColorWheel({ colors = [], size = 280, mode = 'RGB', onMo
           const markerR = 7 + (c.percent / maxPercent) * 10;
           return (
             <G key={idx}>
-              <Line x1={cx} y1={cy} x2={px} y2={py} stroke="#00000022" strokeWidth={1} />
-              <Circle cx={px} cy={py} r={markerR} fill={c.hex} stroke="#FFF" strokeWidth={2} />
+              <Line x1={cx} y1={cy} x2={px} y2={py} stroke={theme.borderStrong} strokeWidth={1} />
+              <Circle cx={px} cy={py} r={markerR} fill={c.hex} stroke={theme.surface} strokeWidth={2} />
               <SvgText
                 x={px}
                 y={py + 3}
@@ -127,17 +132,21 @@ export default function ColorWheel({ colors = [], size = 280, mode = 'RGB', onMo
   );
 }
 
-const styles = StyleSheet.create({
-  container: { alignItems: 'center' },
-  modeRow: { flexDirection: 'row', marginBottom: 12, gap: 8 },
-  modeBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#ECECEC',
-  },
-  modeBtnActive: { backgroundColor: '#333' },
-  modeTxt: { fontSize: 13, fontWeight: '600', color: '#555' },
-  modeTxtActive: { color: '#FFF' },
-  caption: { marginTop: 10, fontSize: 11, color: '#888', textAlign: 'center' },
-});
+function makeStyles(t) {
+  return StyleSheet.create({
+    container: { alignItems: 'center', width: '100%' },
+    modeRow: { flexDirection: 'row', marginBottom: 14, gap: 8 },
+    modeBtn: {
+      paddingHorizontal: 18,
+      paddingVertical: 7,
+      borderRadius: 20,
+      backgroundColor: t.surfaceMuted,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    modeBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
+    modeTxt: { fontSize: 13, fontWeight: '700', color: t.textSecondary },
+    modeTxtActive: { color: t.accentOnText },
+    caption: { marginTop: 12, fontSize: 11, color: t.textMuted, textAlign: 'center' },
+  });
+}

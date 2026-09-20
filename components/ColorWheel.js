@@ -110,7 +110,7 @@ export default function ColorWheel({ colors = [], mode = 'RGB', onModeChange }) 
           return (
             <G key={idx}>
               <Line x1={cx} y1={cy} x2={px} y2={py} stroke={theme.borderStrong} strokeWidth={1} />
-              <Circle cx={px} cy={py} r={markerR} fill={c.hex} stroke={theme.surface} strokeWidth={2} />
+              <Circle cx={px} cy={py} r={markerR} fill={c.hex} stroke={theme.swatchBorder} strokeWidth={2} />
               <SvgText
                 x={px}
                 y={py + 3}

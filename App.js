@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
+import { Feather } from '@expo/vector-icons';
 
 import { getPixelData } from './lib/imagePixels';
 import { extractDominantColors } from './lib/colorAnalysis';
@@ -28,9 +29,9 @@ import HarmonyPanel from './components/HarmonyPanel';
 import AtmospherePanel from './components/AtmospherePanel';
 
 const TABS = [
-  { key: 'palette', label: 'Palette & Roue', icon: '🎨' },
-  { key: 'harmony', label: 'Harmonies', icon: '🧭' },
-  { key: 'atmosphere', label: 'Ambiances', icon: '🌈' },
+  { key: 'palette', label: 'Palette & Roue', icon: 'aperture' },
+  { key: 'harmony', label: 'Harmonies', icon: 'compass' },
+  { key: 'atmosphere', label: 'Ambiances', icon: 'sliders' },
 ];
 
 function AppContent() {
@@ -180,7 +181,12 @@ function AppContent() {
             onPress={pickImage}
             style={[styles.dropzone, dragOver && styles.dropzoneActive]}
           >
-            <Text style={styles.dropIcon}>{imageUri ? '🔄' : '⬆️'}</Text>
+            <Feather
+              name={imageUri ? 'refresh-cw' : 'upload-cloud'}
+              size={28}
+              color={dragOver ? theme.accent : theme.textSecondary}
+              style={styles.dropIcon}
+            />
             <Text style={styles.dropTitle}>
               {imageUri ? 'Choisir une autre image' : 'Importer une image'}
             </Text>
@@ -224,7 +230,11 @@ function AppContent() {
                     onPress={() => setTab(t.key)}
                     style={[styles.tab, active && styles.tabActive]}
                   >
-                    <Text style={styles.tabIcon}>{t.icon}</Text>
+                    <Feather
+                      name={t.icon}
+                      size={15}
+                      color={active ? theme.accentOnText : theme.textSecondary}
+                    />
                     <Text style={[styles.tabTxt, active && styles.tabTxtActive]}>
                       {t.label}
                     </Text>
@@ -304,7 +314,7 @@ function makeStyles(t) {
       borderColor: t.accent,
       backgroundColor: t.accentSoft,
     },
-    dropIcon: { fontSize: 30, marginBottom: 10 },
+    dropIcon: { marginBottom: 10 },
     dropTitle: { fontSize: 16, fontWeight: '700', color: t.textPrimary },
     dropHint: { fontSize: 12.5, color: t.textSecondary, marginTop: 6, textAlign: 'center' },
 

@@ -7,6 +7,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
 import { SCHEMES, computeSchemeTransform } from '../lib/colorHarmony';
 import { readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
+import EditingGuidance from './EditingGuidance';
 
 function DisruptionBar({ value, theme, styles }) {
   let color = theme.success;
@@ -30,6 +31,17 @@ export default function HarmonyPanel({ colors = [], detected }) {
   if (!colors.length || !detected) return null;
 
   const transform = selected ? computeSchemeTransform(colors, selected) : null;
+
+  // Couples origine->cible normalisés pour les consignes de retouche.
+  const guidanceTransforms = transform
+    ? transform.mappings.map((m) => ({
+        hexOrigine: m.original.hex,
+        hexCible: m.newHex,
+        hslOrigine: m.original.hsl,
+        hslCible: m.newHsl,
+        pourcentage: m.original.percent,
+      }))
+    : [];
 
   return (
     <View style={styles.wrap}>
@@ -100,6 +112,10 @@ export default function HarmonyPanel({ colors = [], detected }) {
           </ScrollView>
         </View>
       )}
+
+      {transform && (
+        <EditingGuidance transforms={guidanceTransforms} context="harmony" />
+      )}
     </View>
   );
 }
@@ -164,7 +180,7 @@ function makeStyles(t) {
       alignItems: 'center',
       justifyContent: 'center',
       borderWidth: 1,
-      borderColor: t.chipStroke,
+      borderColor: t.swatchBorder,
     },
     mapChipTxt: { fontSize: 9, fontWeight: '800' },
     arrow: { marginHorizontal: 5, color: t.textMuted, fontSize: 14 },

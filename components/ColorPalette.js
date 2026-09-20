@@ -72,7 +72,7 @@ function makeStyles(t) {
       padding: 9,
       justifyContent: 'space-between',
       borderWidth: 1,
-      borderColor: t.chipStroke,
+      borderColor: t.swatchBorder,
     },
     hex: {
       fontSize: 12.5,

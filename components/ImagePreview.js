@@ -92,7 +92,7 @@ export default function ImagePreview({ imageUri, mappings = [], title = 'Prévis
     const ctx = canvas.getContext('2d');
     const data = view === 'before' ? beforeDataRef.current : afterDataRef.current;
     if (data) ctx.putImageData(data, 0, 0);
-  }, [isWeb, ready, view]);
+  }, [isWeb, ready, view, sig]);
 
   if (!imageUri || !mappings.length) return null;
 

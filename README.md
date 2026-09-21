@@ -1,5 +1,7 @@
 # 🎨 ColorAnalyze
 
+Version actuelle : **1.0.1** · [Changelog](CHANGELOG.md)
+
 Application **Expo (iOS + Android + Web)** d'analyse chromatique à partir d'une image.
 Tout le traitement est réalisé **100 % côté client** — aucune donnée n'est envoyée à un serveur.
 Interface intégralement en **français**, avec **thème clair et sombre**.
@@ -70,3 +72,7 @@ npm run ios      # nécessite macOS
   redimensionnée en PNG puis décodée en JS pur (`upng-js`).
 - La prévisualisation photo avant/après est optimisée pour le web (re-teintage `<canvas>`) ;
   sur mobile, un aperçu de repli est présenté.
+
+## Changelog
+
+Voir [CHANGELOG.md](CHANGELOG.md) pour l'historique des versions.

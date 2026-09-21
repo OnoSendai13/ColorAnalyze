@@ -23,7 +23,7 @@ import { getPixelData } from './lib/imagePixels';
 import { extractDominantColors } from './lib/colorAnalysis';
 import { detectScheme } from './lib/colorHarmony';
 import { deleteColorAt, mergeColorsAt, renormalize } from './lib/paletteEdit';
-import { buildReport, buildCsv } from './lib/report';
+import { buildReport, buildCsv, buildJson, buildCss, buildSass } from './lib/report';
 import { ThemeProvider, useTheme, ThemeToggle } from './lib/theme';
 
 import ColorPalette from './components/ColorPalette';
@@ -56,7 +56,7 @@ function AppContent() {
   // Sélections contrôlées (nécessaires au rapport global).
   const [harmonySelected, setHarmonySelected] = useState(null);
   const [atmoSelected, setAtmoSelected] = useState(null);
-  const [copied, setCopied] = useState(null); // 'report' | 'csv' | 'csv-copied'
+  const [copied, setCopied] = useState(null); // report | csv[-copied] | json[-copied] | css[-copied] | sass[-copied]
 
   const fileInputRef = useRef(null);
 
@@ -138,7 +138,7 @@ function AppContent() {
     return colors.some((c, i) => !originalColors[i] || c.hex !== originalColors[i].hex);
   }, [colors, originalColors]);
 
-  // --- VOLET 5 : copie du rapport / export CSV ---
+  // --- VOLET 5 : copie du rapport / exports ouverts ---
   const handleCopyReport = useCallback(async () => {
     try {
       const txt = buildReport({
@@ -156,30 +156,74 @@ function AppContent() {
     }
   }, [colors, detected, harmonySelected, atmoSelected]);
 
-  const handleExportCsv = useCallback(async () => {
+  const handleExportText = useCallback(async ({ content, filename, mimeType, copiedKey, errorMessage }) => {
     try {
-      const csv = buildCsv(colors);
       if (Platform.OS === 'web') {
-        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const blob = new Blob([content], { type: mimeType });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'coloranalyze-palette.csv';
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
-        URL.revokeObjectURL(url);
-        setCopied('csv');
+        setTimeout(() => URL.revokeObjectURL(url), 0);
+        setCopied(copiedKey);
       } else {
-        await Clipboard.setStringAsync(csv);
-        setCopied('csv-copied');
+        await Clipboard.setStringAsync(content);
+        setCopied(`${copiedKey}-copied`);
       }
       setTimeout(() => setCopied(null), 2200);
     } catch (e) {
       console.warn(e);
-      setError('Impossible d\'exporter le CSV.');
+      setError(errorMessage);
     }
-  }, [colors]);
+  }, []);
+
+  const handleExportCsv = useCallback(async () => {
+    await handleExportText({
+      content: buildCsv(colors),
+      filename: 'coloranalyze-palette.csv',
+      mimeType: 'text/csv;charset=utf-8;',
+      copiedKey: 'csv',
+      errorMessage: "Impossible d'exporter le CSV.",
+    });
+  }, [colors, handleExportText]);
+
+  const handleExportJson = useCallback(async () => {
+    await handleExportText({
+      content: buildJson({
+        colors,
+        detected,
+        harmonyKey: harmonySelected,
+        atmosphereKey: atmoSelected,
+      }),
+      filename: 'coloranalyze-analysis.json',
+      mimeType: 'application/json;charset=utf-8;',
+      copiedKey: 'json',
+      errorMessage: "Impossible d'exporter le JSON.",
+    });
+  }, [colors, detected, harmonySelected, atmoSelected, handleExportText]);
+
+  const handleExportCss = useCallback(async () => {
+    await handleExportText({
+      content: buildCss(colors),
+      filename: 'coloranalyze-palette.css',
+      mimeType: 'text/css;charset=utf-8;',
+      copiedKey: 'css',
+      errorMessage: "Impossible d'exporter le CSS.",
+    });
+  }, [colors, handleExportText]);
+
+  const handleExportSass = useCallback(async () => {
+    await handleExportText({
+      content: buildSass(colors),
+      filename: 'coloranalyze-palette.scss',
+      mimeType: 'text/plain;charset=utf-8;',
+      copiedKey: 'sass',
+      errorMessage: "Impossible d'exporter le SASS.",
+    });
+  }, [colors, handleExportText]);
 
   // --- Sélection via expo-image-picker (mobile + fallback web) ---
   const pickImage = useCallback(async () => {
@@ -312,8 +356,12 @@ function AppContent() {
         <View style={styles.privacyNote}>
           <Feather name="shield" size={14} color={theme.accentSecondary} />
           <Text style={styles.privacyTxt}>
-            Confidentialité : votre image est analysée directement sur votre appareil. Aucun envoi
-            vers un serveur, aucun stockage, aucune collecte de données.
+            Confidentialité : l'image et les pixels restent sur votre appareil. L'application ne
+            sauvegarde ni image, ni palette, ni historique. Aucune analyse, télémétrie ou donnée
+            n'est transmise à un serveur ou à un service tiers pour l'analyse. Les exports sont
+            initiés par vous et quittent l'application uniquement via le téléchargement, le partage
+            ou le presse-papiers choisi. Sans sauvegarde persistante, l'état disparaît à la
+            fermeture ou au rafraîchissement ; aucune suppression côté serveur n'est nécessaire.
           </Text>
         </View>
 
@@ -408,13 +456,15 @@ function AppContent() {
             <View style={styles.actionsCard}>
               <Text style={styles.actionsTitle}>Exporter l'analyse</Text>
               <Text style={styles.actionsHint}>
-                Rapport structuré (couleurs, harmonie, disruption, consignes de retouche) et export
-                CSV de la palette.
+                Rapport structuré (couleurs, harmonie, disruption, consignes de retouche) et exports
+                JSON, CSS, SASS et CSV de la palette.
               </Text>
               <View style={styles.actionsRow}>
                 <Pressable
                   onPress={handleCopyReport}
                   style={[styles.actionBtn, styles.actionBtnPrimary]}
+                  accessibilityRole="button"
+                  accessibilityLabel={copied === 'report' ? 'Rapport copié' : 'Copier le rapport'}
                 >
                   <Feather
                     name={copied === 'report' ? 'check' : 'clipboard'}
@@ -425,20 +475,63 @@ function AppContent() {
                     {copied === 'report' ? 'Rapport copié !' : 'Copier le rapport'}
                   </Text>
                 </Pressable>
-                <Pressable onPress={handleExportCsv} style={styles.actionBtn}>
-                  <Feather
-                    name={copied && copied.startsWith('csv') ? 'check' : 'download'}
-                    size={15}
-                    color={theme.textPrimary}
-                  />
-                  <Text style={styles.actionBtnTxt}>
-                    {copied === 'csv'
-                      ? 'CSV téléchargé !'
-                      : copied === 'csv-copied'
-                      ? 'CSV copié !'
-                      : 'Exporter en CSV'}
-                  </Text>
-                </Pressable>
+                {[
+                  {
+                    key: 'json',
+                    icon: 'file-text',
+                    label: 'Exporter en JSON',
+                    short: 'JSON',
+                    handler: handleExportJson,
+                  },
+                  {
+                    key: 'css',
+                    icon: 'code',
+                    label: 'Exporter en CSS',
+                    short: 'CSS',
+                    handler: handleExportCss,
+                  },
+                  {
+                    key: 'sass',
+                    icon: 'file',
+                    label: 'Exporter en SASS',
+                    short: 'SASS',
+                    handler: handleExportSass,
+                  },
+                  {
+                    key: 'csv',
+                    icon: 'download',
+                    label: 'Exporter en CSV',
+                    short: 'CSV',
+                    handler: handleExportCsv,
+                  },
+                ].map((button) => {
+                  const isDownloaded = copied === button.key;
+                  const isCopied = copied === `${button.key}-copied`;
+                  return (
+                    <Pressable
+                      key={button.key}
+                      onPress={button.handler}
+                      style={styles.actionBtn}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        isDownloaded ? `${button.short} téléchargé` : isCopied ? `${button.short} copié` : button.label
+                      }
+                    >
+                      <Feather
+                        name={isDownloaded || isCopied ? 'check' : button.icon}
+                        size={15}
+                        color={theme.textPrimary}
+                      />
+                      <Text style={styles.actionBtnTxt}>
+                        {isDownloaded
+                          ? `${button.short} téléchargé !`
+                          : isCopied
+                          ? `${button.short} copié !`
+                          : button.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             </View>
           </>

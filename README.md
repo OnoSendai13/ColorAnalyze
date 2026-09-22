@@ -1,6 +1,6 @@
 # 🎨 ColorAnalyze
 
-Version actuelle : **1.1.0** · [Changelog](CHANGELOG.md)
+Version actuelle : **1.2.0** · [Changelog](CHANGELOG.md)
 
 Application **Expo (iOS + Android + Web)** d'analyse chromatique à partir d'une image.
 Tout le traitement est réalisé **100 % côté client** — aucune donnée n'est envoyée à un serveur.

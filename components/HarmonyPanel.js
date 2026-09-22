@@ -1,25 +1,41 @@
 // components/HarmonyPanel.js
 // Panneau des harmonies : schéma détecté + boutons alternatifs + visualisation
-// des décalages HUE, score de disruption (avec explication du calcul) et
-// prévisualisation de la photo re-teintée.
+// des décalages HUE, score de disruption et prévisualisation photo re-teintée.
 
-import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, Animated, LayoutAnimation, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { SCHEMES, computeSchemeTransform } from '../lib/colorHarmony';
 import { readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
+import { useLang } from '../lib/i18n';
 import EditingGuidance from './EditingGuidance';
 import ImagePreview from './ImagePreview';
 
-function DisruptionBar({ value, theme, styles }) {
+function AnimatedDisruptionBar({ value, theme, styles }) {
+  const width = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    width.setValue(0);
+    Animated.timing(width, {
+      toValue: Math.min(100, value),
+      duration: 500,
+      useNativeDriver: false,
+    }).start();
+  }, [value]);
+
   let color = theme.success;
   if (value >= 35) color = theme.danger;
   else if (value >= 12) color = theme.warning;
+
+  const animWidth = width.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+  });
+
   return (
     <View style={styles.disWrap}>
       <View style={styles.disTrack}>
-        <View style={[styles.disFill, { width: `${Math.min(100, value)}%`, backgroundColor: color }]} />
+        <Animated.View style={[styles.disFill, { width: animWidth, backgroundColor: color }]} />
       </View>
       <Text style={[styles.disValue, { color }]}>{Math.round(value)}%</Text>
     </View>
@@ -34,11 +50,30 @@ export default function HarmonyPanel({
   imageUri = null,
 }) {
   const { theme } = useTheme();
+  const { t } = useLang();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [internalSel, setInternalSel] = useState(null);
   const [showCalc, setShowCalc] = useState(false);
 
-  // Sélection contrôlée (App.js) avec repli local si non fournie.
+  // Animated chevron
+  const chevronRotation = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(chevronRotation, {
+      toValue: showCalc ? 1 : 0,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+  }, [showCalc]);
+  const chevronSpin = chevronRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  const toggleCalc = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(250, 'easeInEaseOut', 'opacity'));
+    setShowCalc((v) => !v);
+  };
+
   const sel = onSelect ? selected : internalSel;
   const setSel = onSelect ? onSelect : setInternalSel;
 
@@ -46,7 +81,6 @@ export default function HarmonyPanel({
 
   const transform = sel ? computeSchemeTransform(colors, sel) : null;
 
-  // Couples origine->cible normalisés pour les consignes de retouche.
   const guidanceTransforms = transform
     ? transform.mappings.map((m) => ({
         hexOrigine: m.original.hex,
@@ -57,7 +91,6 @@ export default function HarmonyPanel({
       }))
     : [];
 
-  // Mapping pour la prévisualisation de la photo (re-teinte réelle).
   const previewMappings = transform
     ? transform.mappings.map((m) => ({
         rgb: m.original.rgb,
@@ -68,7 +101,6 @@ export default function HarmonyPanel({
       }))
     : [];
 
-  // Contributions par couleur au score de disruption (pondérées par le %).
   let contributions = [];
   let totalWeighted = 0;
   let totalPercent = 0;
@@ -86,18 +118,18 @@ export default function HarmonyPanel({
   return (
     <View style={styles.wrap}>
       <View style={styles.detectedCard}>
-        <Text style={styles.detectedLabel}>Schéma détecté</Text>
+        <Text style={styles.detectedLabel}>{t('detectedScheme')}</Text>
         <Text style={styles.detectedName}>{detected.label}</Text>
         <Text style={styles.detectedDetail}>{detected.details}</Text>
         <Text style={styles.confidence}>
-          Confiance : {Math.round(detected.score * 100)}% · Familles de teintes : {detected.hueGroups.length}
+          {t('confidence')} : {Math.round(detected.score * 100)}% · {t('hueFamilies')} : {detected.hueGroups.length}
           {detected.neutralRatio > 0.15
-            ? ` · Neutres : ${Math.round(detected.neutralRatio * 100)}%`
+            ? ` · ${t('neutrals')} : ${Math.round(detected.neutralRatio * 100)}%`
             : ''}
         </Text>
       </View>
 
-      <Text style={styles.sectionTitle}>Explorer d'autres schémas</Text>
+      <Text style={styles.sectionTitle}>{t('exploreSchemes')}</Text>
       <View style={styles.btnRow}>
         {Object.entries(SCHEMES).map(([key, def]) => {
           const isActive = sel === key;
@@ -106,10 +138,11 @@ export default function HarmonyPanel({
             <Pressable
               key={key}
               onPress={() => setSel(isActive ? null : key)}
-              style={[
+              style={({ pressed }) => [
                 styles.schemeBtn,
                 isActive && styles.schemeBtnActive,
                 isDetected && styles.schemeBtnDetected,
+                pressed && styles.schemeBtnPressed,
               ]}
             >
               <Text style={[styles.schemeTxt, isActive && styles.schemeTxtActive]}>
@@ -123,48 +156,39 @@ export default function HarmonyPanel({
 
       {transform && (
         <View style={styles.transformCard}>
-          <Text style={styles.transformTitle}>Transformation vers « {transform.label} »</Text>
+          <Text style={styles.transformTitle}>{t('transformTo', { name: transform.label })}</Text>
 
-          <Text style={styles.disLabel}>Score de disruption</Text>
-          <DisruptionBar value={transform.disruption} theme={theme} styles={styles} />
+          <Text style={styles.disLabel}>{t('disruptionScore')}</Text>
+          <AnimatedDisruptionBar value={transform.disruption} theme={theme} styles={styles} />
           <Text style={styles.advice}>{transform.advice}</Text>
 
-          {/* VOLET 3 — Explication du calcul du score */}
-          <Pressable style={styles.calcHeader} onPress={() => setShowCalc((v) => !v)}>
+          {/* Explanation section */}
+          <Pressable style={({ pressed }) => [styles.calcHeader, pressed && { opacity: 0.7 }]} onPress={toggleCalc}>
             <Feather name="help-circle" size={15} color={theme.accent} />
-            <Text style={styles.calcHeaderTxt}>Comment ce score est calculé ?</Text>
-            <Feather
-              name={showCalc ? 'chevron-up' : 'chevron-down'}
-              size={16}
-              color={theme.textSecondary}
-            />
+            <Text style={styles.calcHeaderTxt}>{t('calcTitle')}</Text>
+            <Animated.View style={{ transform: [{ rotate: chevronSpin }] }}>
+              <Feather name="chevron-down" size={16} color={theme.textSecondary} />
+            </Animated.View>
           </Pressable>
 
           {showCalc && (
             <View style={styles.calcBody}>
               <Text style={styles.calcP}>
-                Le score mesure l'ampleur de la retouche nécessaire pour atteindre ce schéma. On
-                calcule le <Text style={styles.calcBold}>décalage de teinte</Text> de chaque couleur,
-                puis on en fait une <Text style={styles.calcBold}>moyenne pondérée par la surface
-                (%)</Text> qu'occupe la couleur dans l'image. Les tons neutres sont ignorés.
+                {t('calcExplain')}
               </Text>
 
               <View style={styles.formulaBox}>
-                <Text style={styles.formulaTxt}>
-                  décalage moyen = Σ(|décalage°| × surface%) ÷ Σsurface%
-                </Text>
-                <Text style={styles.formulaTxt}>
-                  score = min(100, décalage moyen ÷ 180 × 100)
-                </Text>
+                <Text style={styles.formulaTxt}>{t('formulaAvg')}</Text>
+                <Text style={styles.formulaTxt}>{t('formulaScore')}</Text>
               </View>
 
-              <Text style={styles.calcSub}>Contribution de chaque couleur</Text>
+              <Text style={styles.calcSub}>{t('contributionTitle')}</Text>
               {contributions.map((c, i) => (
                 <View key={i} style={styles.contribRow}>
                   <View style={[styles.contribSwatch, { backgroundColor: c.hex }]} />
                   <Text style={styles.contribTxt}>
                     {c.isNeutral ? (
-                      <Text style={styles.contribMuted}>neutre — ignoré</Text>
+                      <Text style={styles.contribMuted}>{t('neutralIgnored')}</Text>
                     ) : (
                       <>
                         {Math.round(c.shift)}° × {Math.round(c.pct)}% ={' '}
@@ -176,24 +200,24 @@ export default function HarmonyPanel({
               ))}
 
               <Text style={styles.calcTotal}>
-                Décalage moyen pondéré : {Math.round(avgShift)}° → score {Math.round(transform.disruption)}%
+                {t('avgWeightedShift')} : {Math.round(avgShift)}° → score {Math.round(transform.disruption)}%
               </Text>
 
               <View style={styles.calcScale}>
                 <Text style={styles.calcScaleItem}>
-                  <Text style={{ color: theme.success }}>■</Text> &lt; 12 % : transition douce
+                  <Text style={{ color: theme.success }}>■</Text> &lt; 12 % : {t('scaleSmooth')}
                 </Text>
                 <Text style={styles.calcScaleItem}>
-                  <Text style={{ color: theme.warning }}>■</Text> 12–35 % : modérée
+                  <Text style={{ color: theme.warning }}>■</Text> 12–35 % : {t('scaleModerate')}
                 </Text>
                 <Text style={styles.calcScaleItem}>
-                  <Text style={{ color: theme.danger }}>■</Text> ≥ 35 % : majeure
+                  <Text style={{ color: theme.danger }}>■</Text> ≥ 35 % : {t('scaleMajor')}
                 </Text>
               </View>
             </View>
           )}
 
-          <Text style={styles.mapTitle}>Décalages de teinte par couleur</Text>
+          <Text style={styles.mapTitle}>{t('hueShiftsPerColor')}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
             {transform.mappings.map((m, i) => (
               <View key={i} style={styles.mapItem}>
@@ -208,7 +232,7 @@ export default function HarmonyPanel({
                 </View>
                 <Text style={styles.shiftTxt}>
                   {m.isNeutral
-                    ? 'neutre'
+                    ? t('neutralLabel')
                     : `${m.shift > 0 ? '+' : ''}${Math.round(m.shift)}°`}
                 </Text>
               </View>
@@ -217,12 +241,11 @@ export default function HarmonyPanel({
         </View>
       )}
 
-      {/* VOLET 4 — Prévisualisation de la photo re-teintée */}
       {transform && imageUri && (
         <ImagePreview
           imageUri={imageUri}
           mappings={previewMappings}
-          title={`Aperçu photo — ${transform.label}`}
+          title={`${t('previewPhoto')} — ${transform.label}`}
         />
       )}
 
@@ -254,7 +277,14 @@ function makeStyles(t) {
     detectedName: { color: t.textPrimary, fontSize: 22, fontWeight: '800', marginTop: 6 },
     detectedDetail: { color: t.textSecondary, fontSize: 13, marginTop: 6, lineHeight: 18 },
     confidence: { color: t.textMuted, fontSize: 11, marginTop: 10 },
-    sectionTitle: { fontSize: 15, fontWeight: '800', color: t.textPrimary, marginBottom: 10 },
+    sectionTitle: {
+      fontSize: 15,
+      fontWeight: '800',
+      color: t.textPrimary,
+      marginBottom: 10,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
     btnRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
     schemeBtn: {
       paddingHorizontal: 13,
@@ -266,6 +296,11 @@ function makeStyles(t) {
     },
     schemeBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
     schemeBtnDetected: { borderColor: t.accentSecondary },
+    schemeBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ translateY: 1 }, { scale: 0.96 }] }
+        : { opacity: 0.7 }),
+    },
     schemeTxt: { fontSize: 12, fontWeight: '700', color: t.textSecondary },
     schemeTxtActive: { color: t.accentOnText },
     transformCard: {
@@ -277,14 +312,19 @@ function makeStyles(t) {
       borderColor: t.border,
     },
     transformTitle: { fontSize: 15, fontWeight: '800', color: t.textPrimary, marginBottom: 14 },
-    disLabel: { fontSize: 12, color: t.textSecondary, marginBottom: 6 },
+    disLabel: {
+      fontSize: 12,
+      color: t.textSecondary,
+      marginBottom: 6,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
     disWrap: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     disTrack: { flex: 1, height: 12, borderRadius: 6, backgroundColor: t.surfaceMuted, overflow: 'hidden' },
     disFill: { height: 12, borderRadius: 6 },
     disValue: { fontSize: 13, fontWeight: '800', width: 44, textAlign: 'right' },
     advice: { fontSize: 12, color: t.textSecondary, marginTop: 10, lineHeight: 17 },
 
-    // VOLET 3 — explication du calcul
     calcHeader: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -341,7 +381,14 @@ function makeStyles(t) {
     calcScale: { marginTop: 12, gap: 4 },
     calcScaleItem: { fontSize: 11.5, color: t.textSecondary },
 
-    mapTitle: { fontSize: 13, fontWeight: '800', color: t.textPrimary, marginTop: 16 },
+    mapTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: t.textPrimary,
+      marginTop: 16,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
     mapItem: { alignItems: 'center', marginRight: 14 },
     mapSwatches: { flexDirection: 'row', alignItems: 'center' },
     mapChip: {

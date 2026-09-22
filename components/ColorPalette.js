@@ -3,14 +3,15 @@
 // Édition : suppression, fusion (sélection multiple), rééchantillonnage, réinit.
 
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
+import { useLang } from '../lib/i18n';
 
 export default function ColorPalette({
   colors = [],
-  title = 'Palette extraite',
+  title,
   editable = false,
   numColors = null,
   minColors = 5,
@@ -22,10 +23,13 @@ export default function ColorPalette({
   onReset,
 }) {
   const { theme } = useTheme();
+  const { t } = useLang();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [selection, setSelection] = useState([]); // index sélectionnés pour la fusion
+  const [selection, setSelection] = useState([]);
 
   if (!colors.length) return null;
+
+  const displayTitle = title ?? t('paletteExtracted');
 
   const toggleSelect = (i) => {
     setSelection((prev) => (prev.includes(i) ? prev.filter((x) => x !== i) : [...prev, i]));
@@ -60,7 +64,7 @@ export default function ColorPalette({
 
   return (
     <View style={styles.wrap}>
-      {title ? <Text style={styles.title}>{title}</Text> : null}
+      {displayTitle ? <Text style={styles.title}>{displayTitle}</Text> : null}
 
       {/* Barre proportionnelle */}
       <View style={styles.bar}>
@@ -73,12 +77,16 @@ export default function ColorPalette({
       {editable && (
         <View style={styles.toolbar}>
           <View style={styles.resampleGroup}>
-            <Text style={styles.toolLabel}>Couleurs</Text>
+            <Text style={styles.toolLabel}>{t('colorsLabel')}</Text>
             <Pressable
               onPress={() => handleResample(-1)}
               disabled={current <= minColors}
-              style={[styles.stepBtn, current <= minColors && styles.stepBtnDisabled]}
-              accessibilityLabel="Moins de couleurs"
+              style={({ pressed }) => [
+                styles.stepBtn,
+                current <= minColors && styles.stepBtnDisabled,
+                pressed && !styles.stepBtnDisabled && styles.stepBtnPressed,
+              ]}
+              accessibilityLabel={t('lessColorsA11y')}
             >
               <Feather name="minus" size={15} color={current <= minColors ? theme.textMuted : theme.textPrimary} />
             </Pressable>
@@ -86,34 +94,42 @@ export default function ColorPalette({
             <Pressable
               onPress={() => handleResample(1)}
               disabled={current >= maxColors}
-              style={[styles.stepBtn, current >= maxColors && styles.stepBtnDisabled]}
-              accessibilityLabel="Plus de couleurs"
+              style={({ pressed }) => [
+                styles.stepBtn,
+                current >= maxColors && styles.stepBtnDisabled,
+                pressed && !styles.stepBtnDisabled && styles.stepBtnPressed,
+              ]}
+              accessibilityLabel={t('moreColorsA11y')}
             >
               <Feather name="plus" size={15} color={current >= maxColors ? theme.textMuted : theme.textPrimary} />
             </Pressable>
           </View>
 
           {canReset && (
-            <Pressable onPress={handleReset} style={styles.resetBtn} accessibilityLabel="Réinitialiser la palette">
+            <Pressable
+              onPress={handleReset}
+              style={({ pressed }) => [styles.resetBtn, pressed && styles.resetBtnPressed]}
+              accessibilityLabel={t('resetPaletteA11y')}
+            >
               <Feather name="rotate-ccw" size={13} color={theme.textSecondary} />
-              <Text style={styles.resetTxt}>Réinitialiser</Text>
+              <Text style={styles.resetTxt}>{t('resetPalette')}</Text>
             </Pressable>
           )}
         </View>
       )}
 
       {editable && (
-        <Text style={styles.hintTxt}>
-          Sélectionnez des couleurs pour les fusionner, ou supprimez-en. Les pourcentages sont
-          recalculés et propagés à la roue, aux harmonies et aux ambiances.
-        </Text>
+        <Text style={styles.hintTxt}>{t('paletteHint')}</Text>
       )}
 
-      {/* Bouton de fusion visible quand 2+ sélectionnées */}
+      {/* Bouton de fusion */}
       {editable && selection.length >= 2 && (
-        <Pressable onPress={handleMerge} style={styles.mergeBtn}>
+        <Pressable
+          onPress={handleMerge}
+          style={({ pressed }) => [styles.mergeBtn, pressed && styles.mergeBtnPressed]}
+        >
           <Feather name="git-merge" size={15} color={theme.accentOnText} />
-          <Text style={styles.mergeTxt}>Fusionner {selection.length} couleurs</Text>
+          <Text style={styles.mergeTxt}>{t('mergeColors', { n: selection.length })}</Text>
         </Pressable>
       )}
 
@@ -127,10 +143,11 @@ export default function ColorPalette({
             <View key={i} style={styles.swatchWrap}>
               <Pressable
                 onPress={editable ? () => toggleSelect(i) : undefined}
-                style={[
+                style={({ pressed }) => [
                   styles.swatch,
                   { backgroundColor: c.hex },
                   isSelected && styles.swatchSelected,
+                  pressed && editable && styles.swatchPressed,
                 ]}
               >
                 {editable && (
@@ -148,7 +165,7 @@ export default function ColorPalette({
                 </Text>
               </Pressable>
 
-              {/* Barre de pourcentage fine sous chaque couleur */}
+              {/* Barre de pourcentage */}
               <View style={styles.pctTrack}>
                 <View
                   style={[styles.pctFill, { width: `${Math.min(100, c.percent)}%`, backgroundColor: c.hex }]}
@@ -161,7 +178,7 @@ export default function ColorPalette({
                     onPress={() => canDelete && handleDelete(i)}
                     disabled={!canDelete}
                     hitSlop={6}
-                    accessibilityLabel="Supprimer cette couleur"
+                    accessibilityLabel={t('deleteColorA11y')}
                   >
                     <Feather
                       name="trash-2"
@@ -202,7 +219,14 @@ function makeStyles(t) {
       marginBottom: 10,
     },
     resampleGroup: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    toolLabel: { fontSize: 12, fontWeight: '700', color: t.textSecondary, marginRight: 2 },
+    toolLabel: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: t.textSecondary,
+      marginRight: 2,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
     stepBtn: {
       width: 32,
       height: 32,
@@ -214,6 +238,11 @@ function makeStyles(t) {
       borderColor: t.border,
     },
     stepBtnDisabled: { opacity: 0.5 },
+    stepBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ scale: 0.92 }] }
+        : { opacity: 0.6 }),
+    },
     countTxt: { fontSize: 14, fontWeight: '800', color: t.textPrimary, minWidth: 22, textAlign: 'center' },
     resetBtn: {
       flexDirection: 'row',
@@ -225,6 +254,11 @@ function makeStyles(t) {
       backgroundColor: t.surfaceMuted,
       borderWidth: 1,
       borderColor: t.border,
+    },
+    resetBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ translateY: 1 }, { scale: 0.97 }] }
+        : { opacity: 0.7 }),
     },
     resetTxt: { fontSize: 12, fontWeight: '700', color: t.textSecondary },
     hintTxt: { fontSize: 11.5, color: t.textMuted, lineHeight: 16, marginBottom: 12 },
@@ -238,6 +272,11 @@ function makeStyles(t) {
       borderRadius: 11,
       backgroundColor: t.accent,
       marginBottom: 14,
+    },
+    mergeBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ translateY: 1 }, { scale: 0.98 }] }
+        : { opacity: 0.8 }),
     },
     mergeTxt: { fontSize: 13, fontWeight: '800', color: t.accentOnText },
 
@@ -255,6 +294,11 @@ function makeStyles(t) {
     swatchSelected: {
       borderWidth: 3,
       borderColor: t.accent,
+    },
+    swatchPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ scale: 0.95 }] }
+        : { opacity: 0.85 }),
     },
     selMark: { position: 'absolute', top: 6, right: 6 },
     hex: {
@@ -281,7 +325,6 @@ function makeStyles(t) {
   });
 }
 
-// Police monospace cross-platform (web / iOS / Android).
 function Platform_monospace() {
   return 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 }

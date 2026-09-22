@@ -2,7 +2,7 @@
 // Application Expo (iOS + Android + Web) d'analyse de couleurs, 100% côté client.
 // Design "Studio créatif sombre" : thème clair + sombre via lib/theme.js.
 
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import {
   SafeAreaView,
   ScrollView,
@@ -13,11 +13,15 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
+  Animated,
+  LayoutAnimation,
+  UIManager,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import * as Clipboard from 'expo-clipboard';
 import { Feather } from '@expo/vector-icons';
+// react-native-svg used by child components; MarchingBorder uses raw HTML svg
 
 import { getPixelData } from './lib/imagePixels';
 import { extractDominantColors } from './lib/colorAnalysis';
@@ -25,13 +29,22 @@ import { detectScheme } from './lib/colorHarmony';
 import { deleteColorAt, mergeColorsAt, renormalize } from './lib/paletteEdit';
 import { buildReport, buildCsv, buildJson, buildCss, buildSass } from './lib/report';
 import { ThemeProvider, useTheme, ThemeToggle } from './lib/theme';
+import { LanguageProvider, useLang } from './lib/i18n';
+
+import { isOnboardingDone, markOnboardingDone } from './lib/onboarding';
 
 import ColorPalette from './components/ColorPalette';
 import ColorWheel from './components/ColorWheel';
 import HarmonyPanel from './components/HarmonyPanel';
 import AtmospherePanel from './components/AtmospherePanel';
+import LanguageMenu from './components/LanguageMenu';
+import OnboardingCarousel from './components/OnboardingCarousel';
+import LegalScreen from './components/LegalScreen';
 
-import { t } from './lib/i18n';
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const TABS = [
   { key: 'palette', labelKey: 'tabPalette', icon: 'aperture' },
@@ -39,28 +52,265 @@ const TABS = [
   { key: 'atmosphere', labelKey: 'tabAtmosphere', icon: 'sliders' },
 ];
 
+// ---------------------------------------------------------------------------
+// Animated marching-ants dropzone border (CSS keyframes, web only)
+// ---------------------------------------------------------------------------
+function MarchingBorder({ active, theme }) {
+  if (Platform.OS !== 'web') return null;
+
+  const color = active ? theme.accent : theme.textMuted;
+  const speed = active ? '0.6s' : '2s';
+  const opacity = active ? 1 : 0.45;
+
+  return (
+    <>
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes marchingAnts {
+          to { stroke-dashoffset: -28; }
+        }
+        .marching-border rect {
+          animation: marchingAnts ${speed} linear infinite;
+        }
+      ` }} />
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: 16, overflow: 'hidden', pointerEvents: 'none' }}>
+        <svg width="100%" height="100%" style={{ position: 'absolute' }} className="marching-border">
+          <rect
+            x="1.5" y="1.5"
+            width="calc(100% - 3px)" height="calc(100% - 3px)"
+            rx="15" ry="15"
+            fill="none"
+            stroke={color}
+            strokeWidth="1.5"
+            strokeDasharray="14,14"
+            strokeOpacity={opacity}
+          />
+        </svg>
+      </View>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Animated color dot for brand
+// ---------------------------------------------------------------------------
+function BrandDot({ theme }) {
+  const rotation = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(rotation, {
+        toValue: 1,
+        duration: 20000,
+        useNativeDriver: Platform.OS !== 'web',
+      })
+    ).start();
+  }, []);
+
+  const spin = rotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <Animated.View
+      style={{
+        width: 16,
+        height: 16,
+        borderRadius: 5,
+        transform: [{ rotate: spin }],
+        overflow: 'hidden',
+      }}
+    >
+      <View style={{ flex: 1, flexDirection: 'row' }}>
+        <View style={{ flex: 1, backgroundColor: '#FF6B6B' }} />
+        <View style={{ flex: 1, backgroundColor: '#7C5CFF' }} />
+      </View>
+      <View style={{ flex: 1, flexDirection: 'row' }}>
+        <View style={{ flex: 1, backgroundColor: '#37E0C6' }} />
+        <View style={{ flex: 1, backgroundColor: '#E0A100' }} />
+      </View>
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Staggered fade-in wrapper
+// ---------------------------------------------------------------------------
+function FadeInView({ delay = 0, children, style }) {
+  const anim = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(14)).current;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(anim, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.spring(translateY, { toValue: 0, tension: 80, friction: 12, useNativeDriver: true }),
+      ]).start();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, []);
+
+  return (
+    <Animated.View style={[style, { opacity: anim, transform: [{ translateY }] }]}>
+      {children}
+    </Animated.View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Animated pill for tab indicator
+// ---------------------------------------------------------------------------
+function TabBar({ tabs, activeKey, onSelect, theme, t }) {
+  const styles = useMemo(() => makeTabStyles(theme), [theme]);
+  const [tabLayouts, setTabLayouts] = useState({});
+  const pillX = useRef(new Animated.Value(0)).current;
+  const pillW = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const layout = tabLayouts[activeKey];
+    if (layout) {
+      Animated.parallel([
+        Animated.spring(pillX, { toValue: layout.x, tension: 120, friction: 15, useNativeDriver: false }),
+        Animated.spring(pillW, { toValue: layout.width, tension: 120, friction: 15, useNativeDriver: false }),
+      ]).start();
+    }
+  }, [activeKey, tabLayouts]);
+
+  const handleLayout = (key, e) => {
+    const { x, width } = e.nativeEvent.layout;
+    setTabLayouts((prev) => ({ ...prev, [key]: { x, width } }));
+  };
+
+  return (
+    <View style={styles.tabRow}>
+      {/* Animated pill background */}
+      <Animated.View
+        style={[
+          styles.tabPill,
+          { left: pillX, width: pillW },
+        ]}
+      />
+      {tabs.map((tabItem) => {
+        const active = activeKey === tabItem.key;
+        return (
+          <Pressable
+            key={tabItem.key}
+            onPress={() => onSelect(tabItem.key)}
+            onLayout={(e) => handleLayout(tabItem.key, e)}
+            style={styles.tab}
+          >
+            <Feather
+              name={tabItem.icon}
+              size={15}
+              color={active ? theme.accentOnText : theme.textSecondary}
+            />
+            <Text style={[styles.tabTxt, active && styles.tabTxtActive]}>
+              {t(tabItem.labelKey)}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Animated disruption / palette bars
+// ---------------------------------------------------------------------------
+function AnimatedBar({ percent, color, style, delay = 0 }) {
+  const width = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      Animated.timing(width, {
+        toValue: percent,
+        duration: 500,
+        useNativeDriver: false,
+      }).start();
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [percent]);
+
+  const animWidth = width.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+  });
+
+  return (
+    <Animated.View style={[style, { width: animWidth, backgroundColor: color }]} />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main app content
+// ---------------------------------------------------------------------------
 function AppContent() {
   const { theme } = useTheme();
+  const { t } = useLang();
+  const styles = useMemo(() => makeStyles(theme), [theme]);
+
+  // --- Onboarding & Legal screen state ---
+  const [showOnboarding, setShowOnboarding] = useState(null); // null = loading, true/false
+  const [showLegal, setShowLegal] = useState(false);
+
+  useEffect(() => {
+    isOnboardingDone().then((done) => setShowOnboarding(!done));
+  }, []);
+
+  const handleOnboardingComplete = useCallback(() => {
+    markOnboardingDone();
+    setShowOnboarding(false);
+  }, []);
+
+  // Show nothing while checking onboarding state
+  if (showOnboarding === null) {
+    return (
+      <View style={{ flex: 1, backgroundColor: theme.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator size="large" color={theme.accent} />
+      </View>
+    );
+  }
+
+  // Show onboarding carousel
+  if (showOnboarding) {
+    return <OnboardingCarousel onComplete={handleOnboardingComplete} />;
+  }
+
+  // Show legal screen
+  if (showLegal) {
+    return <LegalScreen onClose={() => setShowLegal(false)} />;
+  }
+
+  return <MainScreen onShowLegal={() => setShowLegal(true)} />;
+}
+
+function MainScreen({ onShowLegal }) {
+  const { theme } = useTheme();
+  const { t } = useLang();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
   const [imageUri, setImageUri] = useState(null);
   const [colors, setColors] = useState([]);
   const [originalColors, setOriginalColors] = useState([]);
-  const [pixelData, setPixelData] = useState(null); // { data, width, height } en cache
-  const [numColors, setNumColors] = useState(null); // K courant (rééchantillonnage)
+  const [pixelData, setPixelData] = useState(null);
+  const [numColors, setNumColors] = useState(null);
   const [detected, setDetected] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [tab, setTab] = useState('palette');
   const [wheelMode, setWheelMode] = useState('RGB');
   const [dragOver, setDragOver] = useState(false);
+  const [dropzoneLayout, setDropzoneLayout] = useState({ w: 0, h: 0 });
 
-  // Sélections contrôlées (nécessaires au rapport global).
   const [harmonySelected, setHarmonySelected] = useState(null);
   const [atmoSelected, setAtmoSelected] = useState(null);
-  const [copied, setCopied] = useState(null); // report | csv[-copied] | json[-copied] | css[-copied] | sass[-copied]
+  const [copied, setCopied] = useState(null);
 
   const fileInputRef = useRef(null);
+
+  // Tab change with LayoutAnimation
+  const handleTabChange = useCallback((key) => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(200, 'easeInEaseOut', 'opacity'));
+    setTab(key);
+  }, []);
 
   const analyze = useCallback(async (uri) => {
     setLoading(true);
@@ -69,7 +319,7 @@ function AppContent() {
       const pd = await getPixelData(uri);
       const extracted = extractDominantColors(pd.data, { minColors: 5, maxColors: 10 });
       if (!extracted.length) {
-        throw new Error('Aucune couleur détectée dans cette image.');
+        throw new Error(t('errNoColors'));
       }
       setPixelData(pd);
       setOriginalColors(extracted);
@@ -81,7 +331,7 @@ function AppContent() {
       setTab('palette');
     } catch (e) {
       console.warn(e);
-      setError(e.message || 'Erreur lors de l\'analyse de l\'image.');
+      setError(e.message || t('errAnalysis'));
       setColors([]);
       setOriginalColors([]);
       setPixelData(null);
@@ -89,9 +339,8 @@ function AppContent() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [t]);
 
-  // --- VOLET 1 : édition de la palette ---
   const commitPalette = useCallback((next) => {
     setColors(next);
     setDetected(detectScheme(next));
@@ -99,18 +348,12 @@ function AppContent() {
   }, []);
 
   const handleDeleteColor = useCallback(
-    (i) => {
-      const next = deleteColorAt(colors, i);
-      commitPalette(next);
-    },
+    (i) => commitPalette(deleteColorAt(colors, i)),
     [colors, commitPalette]
   );
 
   const handleMergeColors = useCallback(
-    (indices) => {
-      const next = mergeColorsAt(colors, indices);
-      commitPalette(next);
-    },
+    (indices) => commitPalette(mergeColorsAt(colors, indices)),
     [colors, commitPalette]
   );
 
@@ -133,32 +376,26 @@ function AppContent() {
     setNumColors(originalColors.length);
   }, [originalColors]);
 
-  // Palette modifiée ? (pour activer « Réinitialiser »)
   const isEdited = useMemo(() => {
     if (!originalColors.length) return false;
     if (colors.length !== originalColors.length) return true;
     return colors.some((c, i) => !originalColors[i] || c.hex !== originalColors[i].hex);
   }, [colors, originalColors]);
 
-  // --- VOLET 5 : copie du rapport / exports ouverts ---
+  // --- Export handlers ---
   const handleCopyReport = useCallback(async () => {
     try {
-      const txt = buildReport({
-        colors,
-        detected,
-        harmonyKey: harmonySelected,
-        atmosphereKey: atmoSelected,
-      });
+      const txt = buildReport({ colors, detected, harmonyKey: harmonySelected, atmosphereKey: atmoSelected });
       await Clipboard.setStringAsync(txt);
       setCopied('report');
       setTimeout(() => setCopied(null), 2200);
     } catch (e) {
       console.warn(e);
-      setError('Impossible de copier le rapport.');
+      setError(t('errCopyReport'));
     }
-  }, [colors, detected, harmonySelected, atmoSelected]);
+  }, [colors, detected, harmonySelected, atmoSelected, t]);
 
-  const handleExportText = useCallback(async ({ content, filename, mimeType, copiedKey, errorMessage }) => {
+  const handleExportText = useCallback(async ({ content, filename, mimeType, copiedKey, errorKey }) => {
     try {
       if (Platform.OS === 'web') {
         const blob = new Blob([content], { type: mimeType });
@@ -178,66 +415,49 @@ function AppContent() {
       setTimeout(() => setCopied(null), 2200);
     } catch (e) {
       console.warn(e);
-      setError(errorMessage);
+      setError(t(errorKey));
     }
-  }, []);
+  }, [t]);
 
   const handleExportCsv = useCallback(async () => {
     await handleExportText({
-      content: buildCsv(colors),
-      filename: 'coloranalyze-palette.csv',
-      mimeType: 'text/csv;charset=utf-8;',
-      copiedKey: 'csv',
-      errorMessage: "Impossible d'exporter le CSV.",
+      content: buildCsv(colors), filename: 'coloranalyze-palette.csv',
+      mimeType: 'text/csv;charset=utf-8;', copiedKey: 'csv', errorKey: 'errExportCsv',
     });
   }, [colors, handleExportText]);
 
   const handleExportJson = useCallback(async () => {
     await handleExportText({
-      content: buildJson({
-        colors,
-        detected,
-        harmonyKey: harmonySelected,
-        atmosphereKey: atmoSelected,
-      }),
-      filename: 'coloranalyze-analysis.json',
-      mimeType: 'application/json;charset=utf-8;',
-      copiedKey: 'json',
-      errorMessage: "Impossible d'exporter le JSON.",
+      content: buildJson({ colors, detected, harmonyKey: harmonySelected, atmosphereKey: atmoSelected }),
+      filename: 'coloranalyze-analysis.json', mimeType: 'application/json;charset=utf-8;',
+      copiedKey: 'json', errorKey: 'errExportJson',
     });
   }, [colors, detected, harmonySelected, atmoSelected, handleExportText]);
 
   const handleExportCss = useCallback(async () => {
     await handleExportText({
-      content: buildCss(colors),
-      filename: 'coloranalyze-palette.css',
-      mimeType: 'text/css;charset=utf-8;',
-      copiedKey: 'css',
-      errorMessage: "Impossible d'exporter le CSS.",
+      content: buildCss(colors), filename: 'coloranalyze-palette.css',
+      mimeType: 'text/css;charset=utf-8;', copiedKey: 'css', errorKey: 'errExportCss',
     });
   }, [colors, handleExportText]);
 
   const handleExportSass = useCallback(async () => {
     await handleExportText({
-      content: buildSass(colors),
-      filename: 'coloranalyze-palette.scss',
-      mimeType: 'text/plain;charset=utf-8;',
-      copiedKey: 'sass',
-      errorMessage: "Impossible d'exporter le SASS.",
+      content: buildSass(colors), filename: 'coloranalyze-palette.scss',
+      mimeType: 'text/plain;charset=utf-8;', copiedKey: 'sass', errorKey: 'errExportSass',
     });
   }, [colors, handleExportText]);
 
-  // --- Sélection via expo-image-picker (mobile + fallback web) ---
+  // --- Image selection ---
   const pickImage = useCallback(async () => {
     try {
-      // Sur le web, on préfère l'input file natif (permet le glisser-déposer).
       if (Platform.OS === 'web' && fileInputRef.current) {
         fileInputRef.current.click();
         return;
       }
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        setError('Autorisation d\'accès à la galerie refusée.');
+        setError(t('errPermission'));
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -251,49 +471,39 @@ function AppContent() {
       }
     } catch (e) {
       console.warn(e);
-      setError('Impossible d\'ouvrir la galerie.');
+      setError(t('errGallery'));
     }
-  }, [analyze]);
+  }, [analyze, t]);
 
-  // --- Gestion du fichier (web) : input file + glisser-déposer ---
   const handleFile = useCallback(
     (file) => {
       if (!file || !file.type || !file.type.startsWith('image/')) {
-        setError('Veuillez fournir un fichier image valide.');
+        setError(t('errInvalidFile'));
         return;
       }
       const uri = URL.createObjectURL(file);
       setImageUri(uri);
       analyze(uri);
     },
-    [analyze]
+    [analyze, t]
   );
 
   const onFileInputChange = useCallback(
     (e) => {
       const file = e?.target?.files?.[0];
       if (file) handleFile(file);
-      // Réinitialise pour permettre de re-sélectionner le même fichier.
       if (fileInputRef.current) fileInputRef.current.value = '';
     },
     [handleFile]
   );
 
-  // Handlers de glisser-déposer (web uniquement).
   const dropHandlers =
     Platform.OS === 'web'
       ? {
-          onDragOver: (e) => {
-            e.preventDefault();
-            if (!dragOver) setDragOver(true);
-          },
-          onDragLeave: (e) => {
-            e.preventDefault();
-            setDragOver(false);
-          },
+          onDragOver: (e) => { e.preventDefault(); if (!dragOver) setDragOver(true); },
+          onDragLeave: (e) => { e.preventDefault(); setDragOver(false); },
           onDrop: (e) => {
-            e.preventDefault();
-            setDragOver(false);
+            e.preventDefault(); setDragOver(false);
             const file = e.dataTransfer?.files?.[0];
             if (file) handleFile(file);
           },
@@ -305,8 +515,16 @@ function AppContent() {
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar style={theme.statusBar} />
+
+      {/* Web global transition for theme switch */}
+      {Platform.OS === 'web' && (
+        <style dangerouslySetInnerHTML={{ __html: `
+          * { transition: background-color 0.3s ease, color 0.2s ease, border-color 0.25s ease; }
+        ` }} />
+      )}
+
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Input file caché (web) */}
+        {/* Hidden file input (web) */}
         {Platform.OS === 'web' && (
           <input
             ref={fileInputRef}
@@ -317,26 +535,66 @@ function AppContent() {
           />
         )}
 
-        {/* En-tête / héros */}
+        {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerTop}>
             <View style={styles.brandRow}>
-              <View style={styles.brandDot} />
-              <Text style={styles.title}>ColorAnalyze</Text>
+              <BrandDot theme={theme} />
+              <Text style={styles.title}>{t('appName')}</Text>
             </View>
-            <ThemeToggle />
+            <View style={styles.headerActions}>
+              <LanguageMenu />
+              <ThemeToggle />
+              <Pressable
+                onPress={onShowLegal}
+                style={({ pressed }) => [styles.infoBtn, pressed && { opacity: 0.6 }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('legal_title')}
+              >
+                <Feather name="info" size={18} color={theme.textSecondary} />
+              </Pressable>
+            </View>
           </View>
-          <Text style={styles.subtitle}>
-            Analyse les couleurs d'une image : palette, roue chromatique, harmonies et ambiances.
-          </Text>
+          <Text style={styles.subtitle}>{t('subtitle')}</Text>
         </View>
 
-        {/* Zone d'import — dropzone stylée */}
+        {/* Dropzone */}
         <View {...dropHandlers}>
           <Pressable
             onPress={pickImage}
-            style={[styles.dropzone, dragOver && styles.dropzoneActive]}
+            onLayout={(e) => {
+              const { width, height } = e.nativeEvent.layout;
+              setDropzoneLayout({ w: width, h: height });
+            }}
+            style={({ pressed }) => [
+              styles.dropzone,
+              dragOver && styles.dropzoneActive,
+              pressed && styles.dropzonePressed,
+            ]}
           >
+            <MarchingBorder active={dragOver} theme={theme} />
+            {/* Decorative spectrum circle */}
+            {!imageUri && (
+              <View style={styles.spectrumWrap}>
+                <View style={styles.spectrumRing}>
+                  {[0, 40, 80, 120, 160, 200, 240, 280, 320].map((h) => (
+                    <View
+                      key={h}
+                      style={[
+                        styles.spectrumDot,
+                        {
+                          backgroundColor: `hsl(${h}, 75%, 55%)`,
+                          transform: [
+                            { rotate: `${h}deg` },
+                            { translateY: -18 },
+                          ],
+                        },
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
             <Feather
               name={imageUri ? 'refresh-cw' : 'upload-cloud'}
               size={28}
@@ -344,30 +602,21 @@ function AppContent() {
               style={styles.dropIcon}
             />
             <Text style={styles.dropTitle}>
-              {imageUri ? 'Choisir une autre image' : 'Importer une image'}
+              {imageUri ? t('importAnother') : t('importImage')}
             </Text>
             <Text style={styles.dropHint}>
-              {Platform.OS === 'web'
-                ? 'Glissez-déposez une image ici, ou cliquez pour parcourir'
-                : 'Touchez pour choisir une photo ou une capture d\'écran'}
+              {Platform.OS === 'web' ? t('dropHintWeb') : t('dropHintMobile')}
             </Text>
           </Pressable>
         </View>
 
-        {/* VOLET 6 — Note de confidentialité */}
+        {/* Privacy note */}
         <View style={styles.privacyNote}>
           <Feather name="shield" size={14} color={theme.accentSecondary} />
-          <Text style={styles.privacyTxt}>
-            Confidentialité : l'image et les pixels restent sur votre appareil. L'application ne
-            sauvegarde ni image, ni palette, ni historique. Aucune analyse, télémétrie ou donnée
-            n'est transmise à un serveur ou à un service tiers pour l'analyse. Les exports sont
-            initiés par vous et quittent l'application uniquement via le téléchargement, le partage
-            ou le presse-papiers choisi. Sans sauvegarde persistante, l'état disparaît à la
-            fermeture ou au rafraîchissement ; aucune suppression côté serveur n'est nécessaire.
-          </Text>
+          <Text style={styles.privacyTxt}>{t('privacyNote')}</Text>
         </View>
 
-        {/* Aperçu borné (corrige le débordement) */}
+        {/* Image preview */}
         {imageUri ? (
           <View style={styles.previewFrame}>
             <Image source={{ uri: imageUri }} style={styles.preview} resizeMode="contain" />
@@ -377,7 +626,7 @@ function AppContent() {
         {loading && (
           <View style={styles.loadingBox}>
             <ActivityIndicator size="large" color={theme.accent} />
-            <Text style={styles.loadingTxt}>Analyse des couleurs…</Text>
+            <Text style={styles.loadingTxt}>{t('analyzing')}</Text>
           </View>
         )}
 
@@ -389,159 +638,137 @@ function AppContent() {
 
         {hasResult && !loading && (
           <>
-            {/* Onglets — segmented control */}
-            <View style={styles.tabRow}>
-              {TABS.map((t) => {
-                const active = tab === t.key;
-                return (
-                  <Pressable
-                    key={t.key}
-                    onPress={() => setTab(t.key)}
-                    style={[styles.tab, active && styles.tabActive]}
-                  >
-                    <Feather
-                      name={t.icon}
-                      size={15}
-                      color={active ? theme.accentOnText : theme.textSecondary}
-                    />
-                    <Text style={[styles.tabTxt, active && styles.tabTxtActive]}>
-                      {t(t.labelKey)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+            {/* Tab bar with animated pill */}
+            <FadeInView delay={0}>
+              <TabBar
+                tabs={TABS}
+                activeKey={tab}
+                onSelect={handleTabChange}
+                theme={theme}
+                t={t}
+              />
+            </FadeInView>
 
             <View style={styles.content}>
               {tab === 'palette' && (
                 <>
-                  <View style={styles.card}>
-                    <ColorPalette
-                      colors={colors}
-                      editable
-                      numColors={numColors}
-                      minColors={5}
-                      maxColors={10}
-                      canReset={isEdited}
-                      onDeleteColor={handleDeleteColor}
-                      onMergeColors={handleMergeColors}
-                      onResample={handleResample}
-                      onReset={handleReset}
-                    />
-                  </View>
+                  <FadeInView delay={60}>
+                    <View style={styles.card}>
+                      <ColorPalette
+                        colors={colors}
+                        editable
+                        numColors={numColors}
+                        minColors={5}
+                        maxColors={10}
+                        canReset={isEdited}
+                        onDeleteColor={handleDeleteColor}
+                        onMergeColors={handleMergeColors}
+                        onResample={handleResample}
+                        onReset={handleReset}
+                      />
+                    </View>
+                  </FadeInView>
                   <View style={{ height: 16 }} />
-                  <View style={styles.card}>
-                    <ColorWheel colors={colors} mode={wheelMode} onModeChange={setWheelMode} />
-                  </View>
+                  <FadeInView delay={140}>
+                    <View style={styles.card}>
+                      <ColorWheel colors={colors} mode={wheelMode} onModeChange={setWheelMode} />
+                    </View>
+                  </FadeInView>
                 </>
               )}
               {tab === 'harmony' && (
-                <HarmonyPanel
-                  colors={colors}
-                  detected={detected}
-                  selected={harmonySelected}
-                  onSelect={setHarmonySelected}
-                  imageUri={imageUri}
-                />
+                <FadeInView delay={60}>
+                  <HarmonyPanel
+                    colors={colors}
+                    detected={detected}
+                    selected={harmonySelected}
+                    onSelect={setHarmonySelected}
+                    imageUri={imageUri}
+                  />
+                </FadeInView>
               )}
               {tab === 'atmosphere' && (
-                <AtmospherePanel
-                  colors={colors}
-                  selected={atmoSelected}
-                  onSelect={setAtmoSelected}
-                  imageUri={imageUri}
-                />
+                <FadeInView delay={60}>
+                  <AtmospherePanel
+                    colors={colors}
+                    selected={atmoSelected}
+                    onSelect={setAtmoSelected}
+                    imageUri={imageUri}
+                  />
+                </FadeInView>
               )}
             </View>
 
-            {/* VOLET 5 — Export / copie du rapport */}
-            <View style={styles.actionsCard}>
-              <Text style={styles.actionsTitle}>Exporter l'analyse</Text>
-              <Text style={styles.actionsHint}>
-                Rapport structuré (couleurs, harmonie, disruption, consignes de retouche) et exports
-                JSON, CSS, SASS et CSV de la palette.
-              </Text>
-              <View style={styles.actionsRow}>
-                <Pressable
-                  onPress={handleCopyReport}
-                  style={[styles.actionBtn, styles.actionBtnPrimary]}
-                  accessibilityRole="button"
-                  accessibilityLabel={copied === 'report' ? 'Rapport copié' : 'Copier le rapport'}
-                >
-                  <Feather
-                    name={copied === 'report' ? 'check' : 'clipboard'}
-                    size={15}
-                    color={theme.accentOnText}
-                  />
-                  <Text style={[styles.actionBtnTxt, styles.actionBtnTxtPrimary]}>
-                    {copied === 'report' ? 'Rapport copié !' : 'Copier le rapport'}
-                  </Text>
-                </Pressable>
-                {[
-                  {
-                    key: 'json',
-                    icon: 'file-text',
-                    labelKey: 'exportJson',
-                    short: 'JSON',
-                    handler: handleExportJson,
-                  },
-                  {
-                    key: 'css',
-                    icon: 'code',
-                    labelKey: 'exportCss',
-                    short: 'CSS',
-                    handler: handleExportCss,
-                  },
-                  {
-                    key: 'sass',
-                    icon: 'file',
-                    labelKey: 'exportSass',
-                    short: 'SASS',
-                    handler: handleExportSass,
-                  },
-                  {
-                    key: 'csv',
-                    icon: 'download',
-                    labelKey: 'exportCsv',
-                    short: 'CSV',
-                    handler: handleExportCsv,
-                  },
-                ].map((button) => {
-                  const isDownloaded = copied === button.key;
-                  const isCopied = copied === `${button.key}-copied`;
-                  const buttonLabel = t(button.labelKey);
-                  return (
-                    <Pressable
-                      key={button.key}
-                      onPress={button.handler}
-                      style={styles.actionBtn}
-                      accessibilityRole="button"
-                      accessibilityLabel={
-                        isDownloaded ? `${button.short} downloaded` : isCopied ? `${button.short} copied` : buttonLabel
-                      }
-                    >
-                      <Feather
-                        name={isDownloaded || isCopied ? 'check' : button.icon}
-                        size={15}
-                        color={theme.textPrimary}
-                      />
-                      <Text style={styles.actionBtnTxt}>
-                        {isDownloaded
-                          ? `${button.short} downloaded!`
-                          : isCopied
-                          ? `${button.short} copied!`
-                          : buttonLabel}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
+            {/* Export section */}
+            <FadeInView delay={200}>
+              <View style={styles.actionsCard}>
+                <Text style={styles.actionsTitle}>{t('exportTitle')}</Text>
+                <Text style={styles.actionsHint}>{t('exportHint')}</Text>
+                <View style={styles.actionsRow}>
+                  <Pressable
+                    onPress={handleCopyReport}
+                    style={({ pressed }) => [
+                      styles.actionBtn,
+                      styles.actionBtnPrimary,
+                      pressed && styles.actionBtnPressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel={copied === 'report' ? t('reportCopied') : t('copyReport')}
+                  >
+                    <Feather
+                      name={copied === 'report' ? 'check' : 'clipboard'}
+                      size={15}
+                      color={theme.accentOnText}
+                    />
+                    <Text style={[styles.actionBtnTxt, styles.actionBtnTxtPrimary]}>
+                      {copied === 'report' ? t('reportCopied') : t('copyReport')}
+                    </Text>
+                  </Pressable>
+                  {[
+                    { key: 'json', icon: 'file-text', labelKey: 'exportJson', handler: handleExportJson },
+                    { key: 'css', icon: 'code', labelKey: 'exportCss', handler: handleExportCss },
+                    { key: 'sass', icon: 'file', labelKey: 'exportSass', handler: handleExportSass },
+                    { key: 'csv', icon: 'download', labelKey: 'exportCsv', handler: handleExportCsv },
+                  ].map((button) => {
+                    const isDownloaded = copied === button.key;
+                    const isCopied = copied === `${button.key}-copied`;
+                    const label = t(button.labelKey);
+                    return (
+                      <Pressable
+                        key={button.key}
+                        onPress={button.handler}
+                        style={({ pressed }) => [
+                          styles.actionBtn,
+                          pressed && styles.actionBtnPressed,
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          isDownloaded ? `${label} ${t('downloaded')}` : isCopied ? `${label} ${t('copied')}` : label
+                        }
+                      >
+                        <Feather
+                          name={isDownloaded || isCopied ? 'check' : button.icon}
+                          size={15}
+                          color={theme.textPrimary}
+                        />
+                        <Text style={styles.actionBtnTxt}>
+                          {isDownloaded
+                            ? `${label} ${t('downloaded')}`
+                            : isCopied
+                            ? `${label} ${t('copied')}`
+                            : label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               </View>
-            </View>
+            </FadeInView>
           </>
         )}
 
         <View style={{ height: 40 }} />
-        <Text style={styles.footer}>Traitement 100% local · aucune donnée envoyée.</Text>
+        <Text style={styles.footer}>{t('footer')}</Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -550,9 +777,49 @@ function AppContent() {
 export default function App() {
   return (
     <ThemeProvider>
-      <AppContent />
+      <LanguageProvider>
+        <AppContent />
+      </LanguageProvider>
     </ThemeProvider>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
+
+function makeTabStyles(t) {
+  return StyleSheet.create({
+    tabRow: {
+      flexDirection: 'row',
+      backgroundColor: t.surface,
+      borderRadius: 14,
+      padding: 5,
+      marginBottom: 18,
+      borderWidth: 1,
+      borderColor: t.border,
+      position: 'relative',
+    },
+    tabPill: {
+      position: 'absolute',
+      top: 5,
+      bottom: 5,
+      backgroundColor: t.accent,
+      borderRadius: 10,
+    },
+    tab: {
+      flex: 1,
+      flexDirection: 'row',
+      gap: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingVertical: 11,
+      borderRadius: 10,
+      zIndex: 1,
+    },
+    tabTxt: { fontSize: 12.5, fontWeight: '700', color: t.textSecondary },
+    tabTxtActive: { color: t.accentOnText },
+  });
 }
 
 function makeStyles(t) {
@@ -567,11 +834,16 @@ function makeStyles(t) {
       justifyContent: 'space-between',
     },
     brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    brandDot: {
-      width: 14,
-      height: 14,
-      borderRadius: 5,
-      backgroundColor: t.accent,
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    infoBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: t.surfaceElevated,
+      borderWidth: 1,
+      borderColor: t.border,
     },
     title: { fontSize: 30, fontWeight: '900', color: t.textPrimary, letterSpacing: -0.5 },
     subtitle: { fontSize: 14, color: t.textSecondary, marginTop: 10, lineHeight: 20 },
@@ -579,23 +851,47 @@ function makeStyles(t) {
     dropzone: {
       width: '100%',
       borderRadius: 16,
-      borderWidth: 1.5,
-      borderColor: t.border,
-      borderStyle: 'dashed',
+      borderWidth: 0,
       backgroundColor: t.surface,
       alignItems: 'center',
       justifyContent: 'center',
-      paddingVertical: 34,
+      paddingVertical: 38,
       paddingHorizontal: 20,
       marginBottom: 12,
+      position: 'relative',
+      overflow: 'hidden',
     },
     dropzoneActive: {
-      borderColor: t.accent,
       backgroundColor: t.accentSoft,
     },
-    dropIcon: { marginBottom: 10 },
-    dropTitle: { fontSize: 16, fontWeight: '700', color: t.textPrimary },
-    dropHint: { fontSize: 12.5, color: t.textSecondary, marginTop: 6, textAlign: 'center' },
+    dropzonePressed: {
+      ...(Platform.OS === 'web' ? { transform: [{ scale: 0.985 }] } : { opacity: 0.85 }),
+    },
+    spectrumWrap: {
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      width: 44,
+      height: 44,
+      marginLeft: -22,
+      marginTop: -55,
+      opacity: 0.2,
+    },
+    spectrumRing: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    spectrumDot: {
+      position: 'absolute',
+      width: 6,
+      height: 6,
+      borderRadius: 3,
+    },
+    dropIcon: { marginBottom: 10, zIndex: 1 },
+    dropTitle: { fontSize: 16, fontWeight: '700', color: t.textPrimary, zIndex: 1 },
+    dropHint: { fontSize: 12.5, color: t.textSecondary, marginTop: 6, textAlign: 'center', zIndex: 1 },
 
     privacyNote: {
       flexDirection: 'row',
@@ -638,29 +934,6 @@ function makeStyles(t) {
     },
     errorTxt: { color: t.danger, fontSize: 13 },
 
-    tabRow: {
-      flexDirection: 'row',
-      backgroundColor: t.surface,
-      borderRadius: 14,
-      padding: 5,
-      marginBottom: 18,
-      borderWidth: 1,
-      borderColor: t.border,
-    },
-    tab: {
-      flex: 1,
-      flexDirection: 'row',
-      gap: 6,
-      alignItems: 'center',
-      justifyContent: 'center',
-      paddingVertical: 11,
-      borderRadius: 10,
-    },
-    tabActive: { backgroundColor: t.accent },
-    tabIcon: { fontSize: 15 },
-    tabTxt: { fontSize: 12.5, fontWeight: '700', color: t.textSecondary },
-    tabTxtActive: { color: t.accentOnText },
-
     card: {
       backgroundColor: t.surface,
       borderRadius: 16,
@@ -693,6 +966,11 @@ function makeStyles(t) {
       borderColor: t.border,
     },
     actionBtnPrimary: { backgroundColor: t.accent, borderColor: t.accent },
+    actionBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ translateY: 1 }, { scale: 0.97 }] }
+        : { opacity: 0.7 }),
+    },
     actionBtnTxt: { fontSize: 13, fontWeight: '700', color: t.textPrimary },
     actionBtnTxtPrimary: { color: t.accentOnText },
 

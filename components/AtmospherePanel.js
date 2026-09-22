@@ -2,11 +2,12 @@
 // Panneau des ambiances : boutons + prévisualisation de la palette transformée.
 
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { ATMOSPHERES, applyAtmosphere } from '../lib/atmospheres';
 import { readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
+import { useLang } from '../lib/i18n';
 import EditingGuidance from './EditingGuidance';
 import ImagePreview from './ImagePreview';
 
@@ -17,10 +18,10 @@ export default function AtmospherePanel({
   imageUri = null,
 }) {
   const { theme } = useTheme();
+  const { t } = useLang();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [internalSel, setInternalSel] = useState(null);
 
-  // Sélection contrôlée (App.js) avec repli local si non fournie.
   const selected = onSelect ? selectedProp : internalSel;
   const setSelected = onSelect ? onSelect : setInternalSel;
 
@@ -29,7 +30,6 @@ export default function AtmospherePanel({
   const preview = selected ? applyAtmosphere(colors, selected) : null;
   const atmo = ATMOSPHERES.find((a) => a.key === selected);
 
-  // Mapping pour la prévisualisation de la photo (re-teinte réelle).
   const previewMappings = preview
     ? preview.map((p) => ({
         rgb: p.original.rgb,
@@ -40,7 +40,6 @@ export default function AtmospherePanel({
       }))
     : [];
 
-  // Couples origine->cible normalisés pour les consignes de retouche.
   const guidanceTransforms = preview
     ? preview.map((p) => ({
         hexOrigine: p.original.hex,
@@ -53,10 +52,8 @@ export default function AtmospherePanel({
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.sectionTitle}>Ambiances</Text>
-      <Text style={styles.subtitle}>
-        Applique une transformation d'ambiance à la palette pour prévisualiser le rendu.
-      </Text>
+      <Text style={styles.sectionTitle}>{t('sectionAmbiances')}</Text>
+      <Text style={styles.subtitle}>{t('atmosphereSubtitle')}</Text>
 
       <View style={styles.btnRow}>
         {ATMOSPHERES.map((a) => {
@@ -65,7 +62,11 @@ export default function AtmospherePanel({
             <Pressable
               key={a.key}
               onPress={() => setSelected(isActive ? null : a.key)}
-              style={[styles.atmoBtn, isActive && styles.atmoBtnActive]}
+              style={({ pressed }) => [
+                styles.atmoBtn,
+                isActive && styles.atmoBtnActive,
+                pressed && styles.atmoBtnPressed,
+              ]}
             >
               <Feather
                 name={a.icon}
@@ -79,7 +80,7 @@ export default function AtmospherePanel({
       </View>
 
       {/* Palette d'origine */}
-      <Text style={styles.blockLabel}>Original</Text>
+      <Text style={styles.blockLabel}>{t('originalLabel')}</Text>
       <View style={styles.bar}>
         {colors.map((c, i) => (
           <View key={i} style={{ flex: c.percent, backgroundColor: c.hex }} />
@@ -109,12 +110,11 @@ export default function AtmospherePanel({
             ))}
           </View>
 
-          {/* VOLET 4 — Prévisualisation de la photo re-teintée */}
           {imageUri && (
             <ImagePreview
               imageUri={imageUri}
               mappings={previewMappings}
-              title={`Aperçu photo — ${atmo.label}`}
+              title={`${t('previewPhoto')} — ${atmo.label}`}
             />
           )}
 
@@ -128,7 +128,13 @@ export default function AtmospherePanel({
 function makeStyles(t) {
   return StyleSheet.create({
     wrap: { width: '100%' },
-    sectionTitle: { fontSize: 16, fontWeight: '800', color: t.textPrimary },
+    sectionTitle: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: t.textPrimary,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
     subtitle: { fontSize: 12.5, color: t.textSecondary, marginTop: 6, marginBottom: 14 },
     btnRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
     atmoBtn: {
@@ -143,9 +149,22 @@ function makeStyles(t) {
       borderColor: t.border,
     },
     atmoBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
+    atmoBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ translateY: 1 }, { scale: 0.96 }] }
+        : { opacity: 0.7 }),
+    },
     atmoTxt: { fontSize: 12, fontWeight: '700', color: t.textSecondary },
     atmoTxtActive: { color: t.accentOnText },
-    blockLabel: { fontSize: 13, fontWeight: '800', color: t.textPrimary, marginTop: 14, marginBottom: 8 },
+    blockLabel: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: t.textPrimary,
+      marginTop: 14,
+      marginBottom: 8,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
     blockLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 14, marginBottom: 8 },
     atmoDesc: { fontSize: 12, color: t.textSecondary, marginBottom: 10, lineHeight: 17 },
     bar: {

@@ -1,14 +1,15 @@
 // components/ColorWheel.js
 // Roue chromatique en SVG. Place les couleurs extraites selon HUE (angle) et
 // saturation (rayon). Supporte plusieurs modèles : RGB, CMY, RYB.
-// Responsive : se redimensionne selon la largeur du conteneur.
+// FIX: L'anneau de fond s'adapte désormais au mode sélectionné.
 
-import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Pressable, Animated, LayoutAnimation, Platform } from 'react-native';
 import Svg, { Path, Circle, G, Line, Text as SvgText } from 'react-native-svg';
 import { Feather } from '@expo/vector-icons';
 import { hslToHex, readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
+import { useLang } from '../lib/i18n';
 
 /**
  * Convertit une teinte HSL "réelle" (0-360, modèle RGB additif) vers l'angle
@@ -16,9 +17,20 @@ import { useTheme } from '../lib/theme';
  */
 function hueToWheelAngle(hue, mode) {
   if (mode === 'RGB') return hue;
-  if (mode === 'CMY') return (hue + 180) % 360; // roue soustractive opposée
+  if (mode === 'CMY') return (hue + 180) % 360;
   if (mode === 'RYB') return rgbHueToRyb(hue);
   return hue;
+}
+
+/**
+ * Fonction INVERSE : à partir d'un angle sur la roue, retrouve le hue RGB réel.
+ * C'est cette fonction qui manquait et qui causait le bug de l'anneau identique.
+ */
+function wheelAngleToHue(angle, mode) {
+  if (mode === 'RGB') return angle;
+  if (mode === 'CMY') return (angle - 180 + 360) % 360;
+  if (mode === 'RYB') return rybAngleToRgbHue(angle);
+  return angle;
 }
 
 /** Table d'interpolation approximative RGB HUE -> RYB HUE (roue de l'artiste). */
@@ -35,6 +47,22 @@ function rgbHueToRyb(hue) {
     }
   }
   return hue;
+}
+
+/** Table INVERSE : RYB angle -> RGB hue. */
+function rybAngleToRgbHue(rybAngle) {
+  const map = [
+    [0, 0], [35, 60], [60, 120], [120, 180], [240, 240], [300, 300], [360, 360],
+  ];
+  for (let i = 0; i < map.length - 1; i++) {
+    const [r0, h0] = map[i];
+    const [r1, h1] = map[i + 1];
+    if (rybAngle >= r0 && rybAngle <= r1) {
+      const t = (rybAngle - r0) / (r1 - r0);
+      return h0 + t * (h1 - h0);
+    }
+  }
+  return rybAngle;
 }
 
 /** Génère le chemin SVG d'un secteur (wedge). */
@@ -54,42 +82,89 @@ function wedgePath(cx, cy, rInner, rOuter, a0, a1) {
 
 const MODES = ['RGB', 'CMY', 'RYB'];
 
+/** Primaries labels for each mode, with their angle on the wheel. */
+const PRIMARIES = {
+  RGB: [
+    { label: 'R', angle: 0 },
+    { label: 'G', angle: 120 },
+    { label: 'B', angle: 240 },
+  ],
+  CMY: [
+    { label: 'C', angle: 0 },
+    { label: 'M', angle: 120 },
+    { label: 'Y', angle: 240 },
+  ],
+  RYB: [
+    { label: 'R', angle: 0 },
+    { label: 'Y', angle: 120 },
+    { label: 'B', angle: 240 },
+  ],
+};
+
 export default function ColorWheel({ colors = [], mode = 'RGB', onModeChange }) {
   const { theme } = useTheme();
+  const { t } = useLang();
   const styles = useMemo(() => makeStyles(theme), [theme]);
 
-  // Explication repliable des divergences entre modèles.
   const [showExplain, setShowExplain] = useState(false);
-
-  // Mesure de la largeur disponible pour un rendu responsive.
   const [containerW, setContainerW] = useState(0);
   const size = Math.max(200, Math.min(320, (containerW || 300) - 4));
+
+  // Chevron rotation animation
+  const chevronRotation = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(chevronRotation, {
+      toValue: showExplain ? 1 : 0,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+  }, [showExplain]);
+  const chevronSpin = chevronRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  const toggleExplain = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(250, 'easeInEaseOut', 'opacity'));
+    setShowExplain((v) => !v);
+  };
 
   const cx = size / 2;
   const cy = size / 2;
   const rOuter = size / 2 - 6;
   const rInner = rOuter * 0.62;
-  const segments = 60;
+  const segments = 72;
 
+  // FIX: L'anneau utilise maintenant wheelAngleToHue pour adapter les couleurs au mode
   const wedges = [];
   for (let i = 0; i < segments; i++) {
     const a0 = (i / segments) * 360;
     const a1 = ((i + 1) / segments) * 360;
-    const displayHue = a0;
-    const fill = hslToHex({ h: displayHue, s: 85, l: 52 });
+    const midAngle = (a0 + a1) / 2;
+    // Conversion inverse : quel hue RGB correspond à cet angle sur la roue du mode courant ?
+    const rgbHue = wheelAngleToHue(midAngle, mode);
+    const fill = hslToHex({ h: rgbHue, s: 85, l: 52 });
     wedges.push(<Path key={i} d={wedgePath(cx, cy, rInner, rOuter, a0, a1)} fill={fill} />);
   }
 
   const maxPercent = Math.max(...colors.map((c) => c.percent), 1);
 
+  // Primary labels
+  const primaries = PRIMARIES[mode] || PRIMARIES.RGB;
+
   return (
     <View style={styles.container} onLayout={(e) => setContainerW(e.nativeEvent.layout.width)}>
+      {/* Mode buttons with underline indicator */}
       <View style={styles.modeRow}>
         {MODES.map((m) => (
           <Pressable
             key={m}
             onPress={() => onModeChange && onModeChange(m)}
-            style={[styles.modeBtn, mode === m && styles.modeBtnActive]}
+            style={({ pressed }) => [
+              styles.modeBtn,
+              mode === m && styles.modeBtnActive,
+              pressed && styles.modeBtnPressed,
+            ]}
           >
             <Text style={[styles.modeTxt, mode === m && styles.modeTxtActive]}>{m}</Text>
           </Pressable>
@@ -99,10 +174,33 @@ export default function ColorWheel({ colors = [], mode = 'RGB', onModeChange }) 
       <Svg width={size} height={size}>
         <G>{wedges}</G>
         <Circle cx={cx} cy={cy} r={rInner} fill={theme.surface} />
-        {/* Axes discrets */}
+        {/* Axes */}
         <Line x1={cx} y1={cy - rInner} x2={cx} y2={cy + rInner} stroke={theme.border} strokeWidth={1} />
         <Line x1={cx - rInner} y1={cy} x2={cx + rInner} y2={cy} stroke={theme.border} strokeWidth={1} />
 
+        {/* Primary labels on the outer ring */}
+        {primaries.map((p, idx) => {
+          const rad = ((p.angle - 90) * Math.PI) / 180;
+          const labelR = rOuter + 14;
+          const lx = cx + labelR * Math.cos(rad);
+          const ly = cy + labelR * Math.sin(rad);
+          return (
+            <SvgText
+              key={idx}
+              x={lx}
+              y={ly + 4}
+              fontSize={11}
+              fontWeight="bold"
+              fill={theme.textSecondary}
+              textAnchor="middle"
+              opacity={0.8}
+            >
+              {p.label}
+            </SvgText>
+          );
+        })}
+
+        {/* Color markers */}
         {colors.map((c, idx) => {
           const angle = hueToWheelAngle(c.hsl.h, mode);
           const rad = ((angle - 90) * Math.PI) / 180;
@@ -129,59 +227,43 @@ export default function ColorWheel({ colors = [], mode = 'RGB', onModeChange }) 
           );
         })}
       </Svg>
-      <Text style={styles.caption}>
-        Angle = teinte · Distance au centre = saturation · Taille = importance
-      </Text>
+      <Text style={styles.caption}>{t('wheelCaption')}</Text>
 
-      {/* Explication repliable : pourquoi les modèles diffèrent */}
+      {/* Explanation section with animated chevron */}
       <Pressable
-        onPress={() => setShowExplain((v) => !v)}
-        style={styles.explainHeader}
+        onPress={toggleExplain}
+        style={({ pressed }) => [styles.explainHeader, pressed && { opacity: 0.7 }]}
         accessibilityRole="button"
       >
         <Feather name="help-circle" size={15} color={theme.accentSecondary} />
-        <Text style={styles.explainHeaderTxt}>Pourquoi RGB, CMY et RYB diffèrent ?</Text>
-        <Feather
-          name={showExplain ? 'chevron-up' : 'chevron-down'}
-          size={16}
-          color={theme.textSecondary}
-        />
+        <Text style={styles.explainHeaderTxt}>{t('wheelExplainTitle')}</Text>
+        <Animated.View style={{ transform: [{ rotate: chevronSpin }] }}>
+          <Feather name="chevron-down" size={16} color={theme.textSecondary} />
+        </Animated.View>
       </Pressable>
 
       {showExplain && (
         <View style={styles.explainBody}>
-          <Text style={styles.explainP}>
-            Une même couleur ne se place pas au même angle selon le modèle, car chaque modèle
-            définit des primaires différentes et découpe donc le cercle chromatique autrement.
-          </Text>
+          <Text style={styles.explainP}>{t('wheelExplainIntro')}</Text>
           <View style={styles.explainItem}>
             <View style={[styles.dot, { backgroundColor: theme.accent }]} />
             <Text style={styles.explainP}>
-              <Text style={styles.explainBold}>RGB</Text> — mélange additif de lumière (écrans,
-              photo). Primaires : rouge, vert, bleu.
+              <Text style={styles.explainBold}>RGB</Text> — {t('wheelRgbDesc')}
             </Text>
           </View>
           <View style={styles.explainItem}>
             <View style={[styles.dot, { backgroundColor: theme.accentSecondary }]} />
             <Text style={styles.explainP}>
-              <Text style={styles.explainBold}>CMY</Text> — mélange soustractif d'encres
-              (impression). Primaires : cyan, magenta, jaune ; la roue est en quelque sorte
-              l'opposée de la roue RGB.
+              <Text style={styles.explainBold}>CMY</Text> — {t('wheelCmyDesc')}
             </Text>
           </View>
           <View style={styles.explainItem}>
             <View style={[styles.dot, { backgroundColor: theme.warning }]} />
             <Text style={styles.explainP}>
-              <Text style={styles.explainBold}>RYB</Text> — modèle traditionnel des artistes
-              (peinture). Primaires : rouge, jaune, bleu.
+              <Text style={styles.explainBold}>RYB</Text> — {t('wheelRybDesc')}
             </Text>
           </View>
-          <Text style={styles.explainP}>
-            Conséquence : le complémentaire d'une couleur change de modèle en modèle. Le
-            complémentaire du rouge est le cyan en RGB, mais le vert en RYB. Comparer les trois
-            roues aide à choisir des accords cohérents selon le support (écran, impression,
-            peinture).
-          </Text>
+          <Text style={styles.explainP}>{t('wheelExplainConclusion')}</Text>
         </View>
       )}
     </View>
@@ -201,6 +283,11 @@ function makeStyles(t) {
       borderColor: t.border,
     },
     modeBtnActive: { backgroundColor: t.accent, borderColor: t.accent },
+    modeBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ translateY: 1 }, { scale: 0.96 }] }
+        : { opacity: 0.7 }),
+    },
     modeTxt: { fontSize: 13, fontWeight: '700', color: t.textSecondary },
     modeTxtActive: { color: t.accentOnText },
     caption: { marginTop: 12, fontSize: 11, color: t.textMuted, textAlign: 'center' },

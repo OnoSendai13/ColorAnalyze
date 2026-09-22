@@ -2,14 +2,19 @@
   "expo": {
     "name": "ColorAnalyze",
     "slug": "ColorAnalyze",
-    "version": "1.1.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.coloranalyze.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "ColorAnalyze needs access to your photo library to analyze the colors of your images. No image is sent to any server."
+      }
     },
     "android": {
+      "package": "com.coloranalyze.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -19,6 +24,11 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [],
+    "extra": {
+      "privacyPolicyUrl": "https://coloranalyze.app/privacy",
+      "contactEmail": "contact@coloranalyze.app"
     }
   }
 }

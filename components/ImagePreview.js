@@ -1,43 +1,36 @@
 // components/ImagePreview.js
-// Prévisualisation AVANT / APRÈS de la PHOTO re-teintée selon un mapping de
-// couleurs (schéma d'harmonie ou ambiance).
-//
-// - Web : re-teinte réelle des pixels via un <canvas> (garde Platform.OS).
-// - Mobile : repli propre (note + comparaison de palettes déjà affichée par les
-//   panneaux), la manipulation pixel par pixel via upng étant trop coûteuse.
+// Prévisualisation AVANT / APRÈS de la PHOTO re-teintée selon un mapping de couleurs.
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Pressable, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useTheme } from '../lib/theme';
+import { useLang } from '../lib/i18n';
 import { recolorRGBA } from '../lib/imageRecolor';
 
-const MAX_PREVIEW = 480; // dimension max de travail du canvas (perf)
+const MAX_PREVIEW = 480;
 
-export default function ImagePreview({ imageUri, mappings = [], title = 'Prévisualisation sur l\'image' }) {
+export default function ImagePreview({ imageUri, mappings = [], title }) {
   const { theme } = useTheme();
+  const { t } = useLang();
   const styles = useMemo(() => makeStyles(theme), [theme]);
-  const [view, setView] = useState('after'); // 'before' | 'after'
+  const displayTitle = title || t('previewImage');
+  const [view, setView] = useState('after');
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
 
   const canvasRef = useRef(null);
-  const beforeDataRef = useRef(null); // ImageData originale
-  const afterDataRef = useRef(null); // ImageData transformée
+  const beforeDataRef = useRef(null);
+  const afterDataRef = useRef(null);
   const dimsRef = useRef({ w: 0, h: 0 });
 
   const isWeb = Platform.OS === 'web';
 
-  // Signature stable des mappings pour re-déclencher le calcul quand ils changent.
   const sig = useMemo(
-    () =>
-      (mappings || [])
-        .map((m) => `${m.hexOrigine || ''}>${m.hexCible || ''}`)
-        .join('|'),
+    () => (mappings || []).map((m) => `${m.hexOrigine || ''}>${m.hexCible || ''}`).join('|'),
     [mappings]
   );
 
-  // Charge l'image + calcule la version transformée (web uniquement).
   useEffect(() => {
     if (!isWeb || !imageUri || !mappings.length) return;
     let cancelled = false;
@@ -65,23 +58,17 @@ export default function ImagePreview({ imageUri, mappings = [], title = 'Prévis
 
         const recolored = recolorRGBA(original.data, mappings);
         afterDataRef.current = new ImageData(recolored, width, height);
-
         setReady(true);
       } catch (e) {
         console.warn('ImagePreview:', e);
         setFailed(true);
       }
     };
-    img.onerror = () => {
-      if (!cancelled) setFailed(true);
-    };
+    img.onerror = () => { if (!cancelled) setFailed(true); };
     img.src = imageUri;
-    return () => {
-      cancelled = true;
-    };
-  }, [isWeb, imageUri, sig]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { cancelled = true; };
+  }, [isWeb, imageUri, sig]);
 
-  // Peint le canvas visible selon la vue choisie.
   useEffect(() => {
     if (!isWeb || !ready) return;
     const canvas = canvasRef.current;
@@ -96,20 +83,16 @@ export default function ImagePreview({ imageUri, mappings = [], title = 'Prévis
 
   if (!imageUri || !mappings.length) return null;
 
-  // ---- Repli mobile ----
   if (!isWeb) {
     return (
       <View style={styles.wrap}>
         <View style={styles.titleRow}>
           <Feather name="image" size={15} color={theme.textSecondary} />
-          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.title}>{displayTitle}</Text>
         </View>
         <View style={styles.fallback}>
           <Feather name="monitor" size={18} color={theme.textMuted} />
-          <Text style={styles.fallbackTxt}>
-            Prévisualisation de l'image complète disponible sur la version web. Ici, comparez la
-            palette d'origine et la palette transformée ci-dessus.
-          </Text>
+          <Text style={styles.fallbackTxt}>{t('previewFallback')}</Text>
         </View>
       </View>
     );
@@ -119,31 +102,38 @@ export default function ImagePreview({ imageUri, mappings = [], title = 'Prévis
     <View style={styles.wrap}>
       <View style={styles.titleRow}>
         <Feather name="image" size={15} color={theme.textSecondary} />
-        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.title}>{displayTitle}</Text>
       </View>
 
       <View style={styles.toggleRow}>
         <Pressable
           onPress={() => setView('before')}
-          style={[styles.toggleBtn, view === 'before' && styles.toggleBtnActive]}
+          style={({ pressed }) => [
+            styles.toggleBtn,
+            view === 'before' && styles.toggleBtnActive,
+            pressed && styles.toggleBtnPressed,
+          ]}
         >
-          <Text style={[styles.toggleTxt, view === 'before' && styles.toggleTxtActive]}>Avant</Text>
+          <Text style={[styles.toggleTxt, view === 'before' && styles.toggleTxtActive]}>{t('previewBefore')}</Text>
         </Pressable>
         <Pressable
           onPress={() => setView('after')}
-          style={[styles.toggleBtn, view === 'after' && styles.toggleBtnActive]}
+          style={({ pressed }) => [
+            styles.toggleBtn,
+            view === 'after' && styles.toggleBtnActive,
+            pressed && styles.toggleBtnPressed,
+          ]}
         >
-          <Text style={[styles.toggleTxt, view === 'after' && styles.toggleTxtActive]}>Après</Text>
+          <Text style={[styles.toggleTxt, view === 'after' && styles.toggleTxtActive]}>{t('previewAfter')}</Text>
         </Pressable>
       </View>
 
       <View style={styles.frame}>
         {failed ? (
-          <Text style={styles.errTxt}>Impossible de générer la prévisualisation de l'image.</Text>
+          <Text style={styles.errTxt}>{t('previewError')}</Text>
         ) : !ready ? (
-          <Text style={styles.loadingTxt}>Génération de la prévisualisation…</Text>
+          <Text style={styles.loadingTxt}>{t('previewGenerate')}</Text>
         ) : (
-          // Élément DOM natif (web) : rendu via react-native-web.
           <canvas
             ref={canvasRef}
             style={{
@@ -160,9 +150,7 @@ export default function ImagePreview({ imageUri, mappings = [], title = 'Prévis
         )}
       </View>
       <Text style={styles.caption}>
-        {view === 'before'
-          ? 'Image d\'origine.'
-          : 'Rendu simulé : chaque zone reçoit le décalage de teinte de la couleur la plus proche.'}
+        {view === 'before' ? t('previewCapBefore') : t('previewCapAfter')}
       </Text>
     </View>
   );
@@ -186,6 +174,11 @@ function makeStyles(t) {
     },
     toggleBtn: { paddingHorizontal: 18, paddingVertical: 7, borderRadius: 7 },
     toggleBtnActive: { backgroundColor: t.accent },
+    toggleBtnPressed: {
+      ...(Platform.OS === 'web'
+        ? { transform: [{ scale: 0.96 }] }
+        : { opacity: 0.7 }),
+    },
     toggleTxt: { fontSize: 12.5, fontWeight: '700', color: t.textSecondary },
     toggleTxtActive: { color: t.accentOnText },
     frame: {

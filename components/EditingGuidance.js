@@ -1,30 +1,47 @@
 // components/EditingGuidance.js
 // Bloc "Comment appliquer ces changements en retouche".
-// Traduit les couples origine->cible d'un panel (Harmonies ou Ambiances) en
-// consignes de retouche par technique (TSL/HSL, Courbes, Color Grading), en
-// mettant en avant la technique recommandée + un résumé global, plus une liste
-// (non exhaustive) de logiciels. Réutilisable par HarmonyPanel et AtmospherePanel.
 
-import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Pressable, Animated, LayoutAnimation, Platform } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { buildEditingGuidance, EDITING_SOFTWARE } from '../lib/editingGuidance';
 import { readableTextColor } from '../lib/colorConversions';
 import { useTheme } from '../lib/theme';
+import { useLang } from '../lib/i18n';
 
 const TECHNIQUE_META = {
-  tsl: { label: 'TSL / HSL', icon: 'sliders' },
-  courbes: { label: 'Courbes', icon: 'trending-up' },
-  colorGrading: { label: 'Color Grading', icon: 'aperture' },
+  tsl: { labelKey: 'techTsl', icon: 'sliders' },
+  courbes: { labelKey: 'techCurves', icon: 'trending-up' },
+  colorGrading: { labelKey: 'techGrading', icon: 'aperture' },
 };
 
 const TECH_ORDER = ['tsl', 'courbes', 'colorGrading'];
 
 export default function EditingGuidance({ transforms = [], context = 'harmony' }) {
   const { theme } = useTheme();
+  const { t } = useLang();
   const styles = useMemo(() => makeStyles(theme), [theme]);
   const [openColors, setOpenColors] = useState({});
   const [softwareOpen, setSoftwareOpen] = useState(false);
+
+  // Animated chevron for software section
+  const swChevron = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(swChevron, {
+      toValue: softwareOpen ? 1 : 0,
+      duration: 250,
+      useNativeDriver: true,
+    }).start();
+  }, [softwareOpen]);
+  const swChevronSpin = swChevron.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '180deg'],
+  });
+
+  const toggleSoftware = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(250, 'easeInEaseOut', 'opacity'));
+    setSoftwareOpen((v) => !v);
+  };
 
   const guidance = useMemo(
     () => buildEditingGuidance(transforms, { context }),
@@ -35,20 +52,22 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
 
   const { perColor, summary } = guidance;
 
-  const toggleColor = (i) =>
+  const toggleColor = (i) => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(200, 'easeInEaseOut', 'opacity'));
     setOpenColors((prev) => ({ ...prev, [i]: !prev[i] }));
+  };
 
   return (
     <View style={styles.card}>
       <View style={styles.headerRow}>
         <Feather name="edit-3" size={16} color={theme.accent} />
-        <Text style={styles.title}>Comment appliquer ces changements en retouche</Text>
+        <Text style={styles.title}>{t('guidanceTitle')}</Text>
       </View>
 
-      {/* (a) Résumé : technique recommandée + répartition */}
+      {/* Summary */}
       <View style={styles.summaryBox}>
         <View style={styles.recoRow}>
-          <Text style={styles.recoLabel}>Technique principale</Text>
+          <Text style={styles.recoLabel}>{t('mainTechnique')}</Text>
           <View style={styles.recoBadge}>
             <Feather
               name={TECHNIQUE_META[summary.recommendedGlobal].icon}
@@ -59,13 +78,12 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
           </View>
         </View>
 
-        {/* Répartition "quelle part revient à quelle technique" */}
         <View style={styles.breakdown}>
           {TECH_ORDER.map((k) => (
             <View key={k} style={styles.breakItem}>
               <View style={styles.breakTop}>
                 <Feather name={TECHNIQUE_META[k].icon} size={12} color={theme.textSecondary} />
-                <Text style={styles.breakName}>{TECHNIQUE_META[k].label}</Text>
+                <Text style={styles.breakName}>{t(TECHNIQUE_META[k].labelKey)}</Text>
                 <Text style={styles.breakPct}>{summary.breakdown[k]}%</Text>
               </View>
               <View style={styles.breakTrack}>
@@ -86,14 +104,13 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
         <Text style={styles.summaryText}>{summary.text}</Text>
       </View>
 
-      {/* (b) Détail par couleur */}
-      <Text style={styles.subTitle}>Détail par couleur</Text>
+      {/* Detail per color */}
+      <Text style={styles.subTitle}>{t('detailPerColor')}</Text>
       {perColor.map((pc, i) => {
         const open = !!openColors[i];
         return (
           <View key={i} style={styles.colorRow}>
             <View style={styles.colorHead}>
-              {/* Pastilles origine -> cible (contour cf. volet 2) */}
               <View style={[styles.chip, { backgroundColor: pc.hexOrigine }]}>
                 <Text style={[styles.chipPct, { color: readableTextColor(pc.hexOrigine) }]}>
                   {Math.round(pc.pourcentage)}%
@@ -104,7 +121,7 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
 
               <View style={styles.colorMeta}>
                 <Text style={styles.bandName}>
-                  {pc.isNeutral ? 'Tons neutres / désaturés' : `Gamme ${pc.band.label}`}
+                  {pc.isNeutral ? t('neutralDesaturated') : t('colorBand', { name: pc.band.label })}
                 </Text>
                 <View style={styles.recoInline}>
                   <Feather
@@ -117,7 +134,6 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
               </View>
             </View>
 
-            {/* Directions résumées (deltas) */}
             <View style={styles.tagRow}>
               {pc.directions.map((d, di) => (
                 <View key={di} style={styles.tag}>
@@ -126,22 +142,23 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
               ))}
             </View>
 
-            {/* Consigne de la technique recommandée, toujours visible */}
             <View style={styles.recoInstruction}>
               <Text style={styles.recoInstrTxt}>
                 {pc.techniques[pc.recommended].text}
               </Text>
             </View>
 
-            {/* Alternatives repliables */}
-            <Pressable style={styles.moreBtn} onPress={() => toggleColor(i)}>
+            <Pressable
+              style={({ pressed }) => [styles.moreBtn, pressed && { opacity: 0.6 }]}
+              onPress={() => toggleColor(i)}
+            >
               <Feather
                 name={open ? 'chevron-up' : 'chevron-down'}
                 size={13}
                 color={theme.textSecondary}
               />
               <Text style={styles.moreTxt}>
-                {open ? 'Masquer les autres techniques' : 'Voir les 3 techniques'}
+                {open ? t('hideOtherTech') : t('showAllTech')}
               </Text>
             </Pressable>
 
@@ -159,8 +176,8 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
                           color={isReco ? theme.accent : theme.textSecondary}
                         />
                         <Text style={[styles.altName, isReco && { color: theme.accent }]}>
-                          {TECHNIQUE_META[k].label}
-                          {isReco ? ' · recommandé' : ''}
+                          {t(TECHNIQUE_META[k].labelKey)}
+                          {isReco ? ` · ${t('recommended')}` : ''}
                         </Text>
                       </View>
                       <Text style={[styles.altTxt, !applicable && styles.altTxtMuted]}>
@@ -175,15 +192,16 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
         );
       })}
 
-      {/* (c) Logiciels (liste non exhaustive) */}
-      <Pressable style={styles.swHeader} onPress={() => setSoftwareOpen((v) => !v)}>
+      {/* Software list */}
+      <Pressable
+        style={({ pressed }) => [styles.swHeader, pressed && { opacity: 0.7 }]}
+        onPress={toggleSoftware}
+      >
         <Feather name="package" size={14} color={theme.textSecondary} />
-        <Text style={styles.swHeaderTxt}>Logiciels compatibles (liste non exhaustive)</Text>
-        <Feather
-          name={softwareOpen ? 'chevron-up' : 'chevron-down'}
-          size={15}
-          color={theme.textSecondary}
-        />
+        <Text style={styles.swHeaderTxt}>{t('softwareTitle')}</Text>
+        <Animated.View style={{ transform: [{ rotate: swChevronSpin }] }}>
+          <Feather name="chevron-down" size={15} color={theme.textSecondary} />
+        </Animated.View>
       </Pressable>
       {softwareOpen && (
         <View style={styles.swList}>
@@ -193,16 +211,14 @@ export default function EditingGuidance({ transforms = [], context = 'harmony' }
                 <Text style={styles.swName}>{s.name}</Text>
                 {s.free && (
                   <View style={styles.freeBadge}>
-                    <Text style={styles.freeTxt}>gratuit</Text>
+                    <Text style={styles.freeTxt}>{t('softwareFree')}</Text>
                   </View>
                 )}
               </View>
               {s.tools ? <Text style={styles.swTools}>{s.tools}</Text> : null}
             </View>
           ))}
-          <Text style={styles.swFoot}>
-            Les noms d'outils varient selon les versions et les langues.
-          </Text>
+          <Text style={styles.swFoot}>{t('softwareNote')}</Text>
         </View>
       )}
     </View>
@@ -269,7 +285,14 @@ function makeStyles(t) {
 
     summaryText: { fontSize: 12.5, color: t.textSecondary, lineHeight: 18 },
 
-    subTitle: { fontSize: 13, fontWeight: '800', color: t.textPrimary, marginBottom: 10 },
+    subTitle: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: t.textPrimary,
+      marginBottom: 10,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
 
     colorRow: {
       borderTopWidth: 1,

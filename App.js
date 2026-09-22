@@ -31,10 +31,12 @@ import ColorWheel from './components/ColorWheel';
 import HarmonyPanel from './components/HarmonyPanel';
 import AtmospherePanel from './components/AtmospherePanel';
 
+import { t } from './lib/i18n';
+
 const TABS = [
-  { key: 'palette', label: 'Palette & Roue', icon: 'aperture' },
-  { key: 'harmony', label: 'Harmonies', icon: 'compass' },
-  { key: 'atmosphere', label: 'Ambiances', icon: 'sliders' },
+  { key: 'palette', labelKey: 'tabPalette', icon: 'aperture' },
+  { key: 'harmony', labelKey: 'tabHarmony', icon: 'compass' },
+  { key: 'atmosphere', labelKey: 'tabAtmosphere', icon: 'sliders' },
 ];
 
 function AppContent() {
@@ -403,7 +405,7 @@ function AppContent() {
                       color={active ? theme.accentOnText : theme.textSecondary}
                     />
                     <Text style={[styles.tabTxt, active && styles.tabTxtActive]}>
-                      {t.label}
+                      {t(t.labelKey)}
                     </Text>
                   </Pressable>
                 );
@@ -479,34 +481,35 @@ function AppContent() {
                   {
                     key: 'json',
                     icon: 'file-text',
-                    label: 'Exporter en JSON',
+                    labelKey: 'exportJson',
                     short: 'JSON',
                     handler: handleExportJson,
                   },
                   {
                     key: 'css',
                     icon: 'code',
-                    label: 'Exporter en CSS',
+                    labelKey: 'exportCss',
                     short: 'CSS',
                     handler: handleExportCss,
                   },
                   {
                     key: 'sass',
                     icon: 'file',
-                    label: 'Exporter en SASS',
+                    labelKey: 'exportSass',
                     short: 'SASS',
                     handler: handleExportSass,
                   },
                   {
                     key: 'csv',
                     icon: 'download',
-                    label: 'Exporter en CSV',
+                    labelKey: 'exportCsv',
                     short: 'CSV',
                     handler: handleExportCsv,
                   },
                 ].map((button) => {
                   const isDownloaded = copied === button.key;
                   const isCopied = copied === `${button.key}-copied`;
+                  const buttonLabel = t(button.labelKey);
                   return (
                     <Pressable
                       key={button.key}
@@ -514,7 +517,7 @@ function AppContent() {
                       style={styles.actionBtn}
                       accessibilityRole="button"
                       accessibilityLabel={
-                        isDownloaded ? `${button.short} téléchargé` : isCopied ? `${button.short} copié` : button.label
+                        isDownloaded ? `${button.short} downloaded` : isCopied ? `${button.short} copied` : buttonLabel
                       }
                     >
                       <Feather
@@ -524,10 +527,10 @@ function AppContent() {
                       />
                       <Text style={styles.actionBtnTxt}>
                         {isDownloaded
-                          ? `${button.short} téléchargé !`
+                          ? `${button.short} downloaded!`
                           : isCopied
-                          ? `${button.short} copié !`
-                          : button.label}
+                          ? `${button.short} copied!`
+                          : buttonLabel}
                       </Text>
                     </Pressable>
                   );
